@@ -14,7 +14,12 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
  * calls requireSession() from @/lib/auth/guard as well — see that file.
  */
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login"];
+/**
+ * /api/health is public because a broken deploy is exactly when you cannot log
+ * in to diagnose it. Its unauthenticated response carries only pass/fail per
+ * check — no hostnames, no error text, no configuration detail.
+ */
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
