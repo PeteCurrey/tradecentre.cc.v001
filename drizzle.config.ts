@@ -18,7 +18,15 @@ export default {
   schema: "./src/lib/db/schema.ts",
   out: "./drizzle",
   dialect: "postgresql",
-  dbCredentials: { url, ssl: url.includes("localhost") ? false : "require" },
+  dbCredentials: {
+    url,
+    // Same rule as the runtime client: TLS everywhere except localhost and
+    // Railway's private network, which presents no matching certificate.
+    ssl:
+      url.includes("localhost") || url.includes(".railway.internal")
+        ? false
+        : "require",
+  },
   strict: true,
   verbose: true,
 } satisfies Config;

@@ -5,22 +5,27 @@ import { env } from "@/lib/env";
 import * as schema from "./schema";
 
 /**
- * Postgres connection (Supabase-hosted, app running on Railway).
+ * Postgres connection.
  *
- * ⚠️ Supabase offers three connection strings and they are NOT interchangeable:
+ * PRIMARY: Railway Postgres over private networking —
+ *   postgres.railway.internal:5432
+ * Never leaves Railway's network, so there is no public exposure, no IPv6/IPv4
+ * routing problem, and ~1ms latency. Railway injects this via a reference
+ * variable when the services are linked.
  *
- *   • Direct        db.<ref>.supabase.co:5432        — IPv6 only on many projects
- *   • Session pool  <region>.pooler.supabase.com:5432 — behaves like a normal PG
- *   • Transaction   <region>.pooler.supabase.com:6543 — NO prepared statements
+ * Externally (migrations, seeding, sync from a laptop) the same database is
+ * reachable at its public proxy host, which does require TLS.
  *
- * postgres.js uses prepared statements by default, so pointing it at the
- * transaction pooler (6543) without `prepare: false` produces confusing
- * intermittent errors under load rather than a clean failure at startup.
- * We detect the port and configure accordingly.
+ * ⚠️ Two host-dependent settings, both of which fail confusingly if wrong:
  *
- * For a persistent Node process holding a small pool, the SESSION pooler
- * (port 5432) is the better default — it supports prepared statements and
- * behaves like ordinary Postgres.
+ *   TLS — required over the public internet, but `*.railway.internal` presents
+ *   no certificate valid for that name, so forcing it breaks the connection
+ *   rather than securing anything. See needsTls().
+ *
+ *   PREPARED STATEMENTS — postgres.js uses them by default. Supabase's
+ *   transaction pooler (port 6543) does not support them and fails
+ *   intermittently under load rather than cleanly at startup. Detected by port.
+ *   Retained because Supabase remains a valid target for this app.
  */
 
 const globalForDb = globalThis as unknown as {
@@ -36,12 +41,23 @@ function isTransactionPooler(url: string): boolean {
   }
 }
 
-function isLocal(url: string): boolean {
+/**
+ * Whether TLS should be required.
+ *
+ * Railway's `*.railway.internal` addresses are on a private network that never
+ * leaves their infrastructure, and the endpoint does not present a certificate
+ * valid for that hostname — so forcing TLS there fails the connection outright
+ * rather than making anything safer. Everything reachable over the public
+ * internet still requires it.
+ */
+function needsTls(url: string): boolean {
   try {
     const h = new URL(url).hostname;
-    return h === "localhost" || h === "127.0.0.1";
+    if (h === "localhost" || h === "127.0.0.1") return false;
+    if (h.endsWith(".railway.internal")) return false;
+    return true;
   } catch {
-    return false;
+    return true; // unparseable — fail closed
   }
 }
 
@@ -52,7 +68,7 @@ function client() {
       max: 10,
       idle_timeout: 20,
       connect_timeout: 15,
-      ssl: isLocal(url) ? false : "require",
+      ssl: needsTls(url) ? "require" : false,
       // Required on Supabase's transaction pooler; harmless elsewhere but it
       // costs performance, so only disable prepares when we actually must.
       prepare: !isTransactionPooler(url),
