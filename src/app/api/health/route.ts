@@ -99,7 +99,20 @@ export async function GET() {
       const { db } = await import("@/lib/db");
       try {
         await db.execute(sql`select 1 as ok`);
-        return shape;
+
+        // `select 1` succeeds on a completely empty database, so connectivity
+        // alone reported "healthy" while every page crashed on a missing
+        // table. Check the schema actually exists.
+        const rows = (await db.execute(
+          sql`select count(*)::int as n from information_schema.tables
+              where table_schema = 'public'`,
+        )) as unknown as Array<{ n: number }>;
+        const tables = Number(rows?.[0]?.n ?? 0);
+
+        if (tables === 0) {
+          throw new Error("connected, but NO TABLES — run: npm run db:migrate && npm run seed");
+        }
+        return `${shape} — ${tables} tables`;
       } catch (e) {
         // postgres.js wraps the real failure: `message` is just "Failed query".
         // The cause is in code/errno/cause, and without it the report says
