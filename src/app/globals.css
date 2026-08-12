@@ -1,0 +1,275 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   TRADER PLATFORM — DESIGN SYSTEM
+   Derived from the "Phoenix / ZEUS-X" reference at ~2x information density.
+
+   THE ONE RULE THAT MATTERS:
+     Orange  = interface state   (active, live, selected, armed)
+     Green/red = money           (P&L, and nothing else, ever)
+
+   Because green/red only ever mean money, a red number is never ambiguous.
+   Never use green/red for UI state. Never use orange for P&L.
+   ========================================================================== */
+
+@theme {
+  /* ---- Surfaces -------------------------------------------------------- */
+  --color-base: #141416; /* page background */
+  --color-sunken: #0e0e10; /* wells, table headers, inset areas */
+  --color-card: #1a1a1d; /* standard panel */
+  --color-card-raised: #212125; /* nested / hovered panel */
+  --color-card-glass: #1a1a1dcc; /* overlay panels */
+
+  /* ---- Borders (deliberately low contrast, per reference) -------------- */
+  --color-line: #2a2a30;
+  --color-line-strong: #3a3a42;
+
+  /* ---- Text ------------------------------------------------------------ */
+  --color-ink: #f4f4f6; /* primary values */
+  --color-ink-dim: #9b9ba5; /* labels, secondary */
+  --color-ink-mute: #6a6a75; /* inactive, placeholder */
+  --color-ink-faint: #4a4a53; /* disabled */
+
+  /* ---- Accent: INTERFACE STATE ONLY ------------------------------------ */
+  --color-accent: #ff5a0a;
+  --color-accent-hot: #ff7a35;
+  --color-accent-dim: #b83f06;
+  --color-accent-wash: #ff5a0a1a;
+  --color-accent-line: #ff5a0a40;
+
+  /* ---- Money: P&L ONLY -------------------------------------------------- */
+  --color-profit: #2fd16b;
+  --color-profit-wash: #2fd16b1a;
+  --color-loss: #ff4d4d;
+  --color-loss-wash: #ff4d4d1a;
+  --color-flat: #6a6a75;
+
+  /* ---- Signal (risk / status, never P&L) -------------------------------- */
+  --color-warn: #f5a623;
+  --color-warn-wash: #f5a6231a;
+  --color-info: #4a9eff;
+  --color-live: #ff5a0a;
+
+  /* ---- Conviction grades ------------------------------------------------ */
+  --color-grade-aplus: #ff5a0a;
+  --color-grade-a: #ff8c4a;
+  --color-grade-b: #9b9ba5;
+  --color-grade-c: #5a5a63;
+
+  /* ---- Book identity (instrument-class sub-accounts) -------------------- */
+  --color-book-primary: #ff5a0a;
+  --color-book-fx: #7db3ff;
+  --color-book-indices: #a78bfa;
+  --color-book-commodities: #ffc14a;
+
+  /* ---- Horizon identity (hold time, a per-trade tag) -------------------- */
+  --color-horizon-scalp: #ff8c4a;
+  --color-horizon-intraday: #ffb36b;
+  --color-horizon-swing: #6ec3d4;
+  --color-horizon-position: #9b8cf0;
+
+  /* ---- Type ------------------------------------------------------------- */
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Tightened vs the reference so 24 screens actually fit */
+  --text-display: 3.25rem;
+  --text-display--line-height: 0.92;
+  --text-display--letter-spacing: -0.02em;
+  --text-hero: 2.25rem;
+  --text-hero--line-height: 0.95;
+  --text-hero--letter-spacing: -0.015em;
+  --text-figure: 1.5rem;
+  --text-figure--line-height: 1.1;
+
+  /* ---- Radii ------------------------------------------------------------ */
+  --radius-card: 20px;
+  --radius-tile: 14px;
+  --radius-pill: 999px;
+
+  /* ---- Motion ----------------------------------------------------------- */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-base);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+
+    /* Subtle dot texture, as in the reference */
+    background-image: radial-gradient(
+      var(--color-line) 0.5px,
+      transparent 0.5px
+    );
+    background-size: 22px 22px;
+  }
+
+  /* Numbers must never jitter as they stream. */
+  :where(.tnum, table, input[type="number"]) {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  ::selection {
+    background: var(--color-accent-wash);
+    color: var(--color-ink);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+    border: 3px solid var(--color-base);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-faint);
+  }
+}
+
+/* ==========================================================================
+   COMPONENT PRIMITIVES
+   ========================================================================== */
+
+@layer components {
+  /* ---- Card ------------------------------------------------------------- */
+  .card {
+    background-color: var(--color-card);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    position: relative;
+  }
+
+  .card-sunken {
+    background-color: var(--color-sunken);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-tile);
+  }
+
+  /* Hero panels get a faint top sheen, as in the reference */
+  .card-hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding-top: 1px;
+    background: linear-gradient(
+      180deg,
+      #ffffff14 0%,
+      transparent 40%
+    );
+    pointer-events: none;
+  }
+
+  /* ---- Typographic roles ------------------------------------------------ */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    line-height: 0.95;
+  }
+
+  .label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ink-dim);
+  }
+
+  .label-faint {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ink-mute);
+  }
+
+  .figure {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    letter-spacing: -0.01em;
+  }
+
+  /* ---- Pill toggle (reference: orange = on, grey = off) ------------------ */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.75rem;
+    min-width: 3rem;
+    border-radius: var(--radius-pill);
+    background-color: var(--color-card-raised);
+    border: 1px solid var(--color-line);
+    transition: all 180ms var(--ease-out-quint);
+  }
+
+  .pill-on {
+    background-color: var(--color-accent);
+    border-color: var(--color-accent-hot);
+    box-shadow: 0 0 20px -4px var(--color-accent);
+  }
+
+  /* ---- Live indicator --------------------------------------------------- */
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--color-live);
+    box-shadow: 0 0 0 0 var(--color-accent-line);
+    animation: live-pulse 2.4s var(--ease-out-quint) infinite;
+  }
+
+  /* ---- Money semantics --------------------------------------------------- */
+  .money-up {
+    color: var(--color-profit);
+  }
+  .money-down {
+    color: var(--color-loss);
+  }
+  .money-flat {
+    color: var(--color-flat);
+  }
+}
+
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-accent-line);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
