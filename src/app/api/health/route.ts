@@ -23,6 +23,47 @@ type Check = {
   ms?: number;
 };
 
+/**
+ * Describe DATABASE_URL without ever revealing the password.
+ *
+ * The pooler-vs-direct distinction is the whole diagnosis on IPv4 hosts, so it
+ * is stated explicitly rather than left to be inferred from a hostname.
+ */
+function describeDatabaseUrl(raw: string | undefined): string {
+  if (!raw) return "DATABASE_URL not set";
+  try {
+    const u = new URL(raw);
+    const port = u.port || "5432";
+    const pooled = u.hostname.includes("pooler.supabase.com");
+    const userLooksPooled = u.username.includes(".");
+
+    if (pooled) {
+      const mode = port === "6543" ? "transaction pooler" : "session pooler";
+      return `${u.hostname}:${port} (${mode})`;
+    }
+    return (
+      `${u.hostname}:${port} (DIRECT HOST — publishes IPv6 only, ` +
+      `unreachable from IPv4 platforms like Railway; switch to the session pooler` +
+      `${userLooksPooled ? "" : "; note the pooler username is postgres.<project-ref>"})`
+    );
+  } catch {
+    return "DATABASE_URL is not a valid URL";
+  }
+}
+
+/** Flatten an error chain — postgres.js hides the real cause underneath. */
+function unwrap(e: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  for (let depth = 0; cur && depth < 4; depth++) {
+    const err = cur as Error & { code?: string; errno?: number; cause?: unknown };
+    const bits = [err.code, err.message?.split("\n")[0]].filter(Boolean);
+    if (bits.length) parts.push(bits.join(" "));
+    cur = err.cause;
+  }
+  return parts.join(" ← ") || String(e);
+}
+
 async function timed(name: string, fn: () => Promise<string | void>): Promise<Check> {
   const t = Date.now();
   try {
@@ -48,22 +89,23 @@ export async function GET() {
   });
 
   // --- Database ----------------------------------------------------------
+  // The connection SHAPE is reported whether or not the query succeeds. An
+  // earlier version computed it only on success, which hid the single most
+  // useful fact — pooler or direct host — at exactly the moment it mattered.
+  const shape = describeDatabaseUrl(process.env.DATABASE_URL);
+
   checks.push(
     await timed("database", async () => {
       const { db } = await import("@/lib/db");
-      const r = await db.execute(sql`select 1 as ok`);
-      if (!r) throw new Error("no response");
-
-      const url = process.env.DATABASE_URL ?? "";
-      let shape = "";
       try {
-        const u = new URL(url);
-        const pooled = u.hostname.includes("pooler.supabase.com");
-        shape = `${u.hostname}:${u.port || 5432} ${pooled ? "(pooler)" : "(DIRECT — IPv6 only, will fail on IPv4 hosts)"}`;
-      } catch {
-        shape = "unparseable DATABASE_URL";
+        await db.execute(sql`select 1 as ok`);
+        return shape;
+      } catch (e) {
+        // postgres.js wraps the real failure: `message` is just "Failed query".
+        // The cause is in code/errno/cause, and without it the report says
+        // nothing actionable.
+        throw new Error(`${shape} — ${unwrap(e)}`);
       }
-      return shape;
     }),
   );
 
