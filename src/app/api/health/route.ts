@@ -34,18 +34,33 @@ function describeDatabaseUrl(raw: string | undefined): string {
   try {
     const u = new URL(raw);
     const port = u.port || "5432";
-    const pooled = u.hostname.includes("pooler.supabase.com");
-    const userLooksPooled = u.username.includes(".");
+    const host = u.hostname;
+    const where = `${host}:${port}`;
 
-    if (pooled) {
-      const mode = port === "6543" ? "transaction pooler" : "session pooler";
-      return `${u.hostname}:${port} (${mode})`;
+    // Railway private networking — the correct target for the deployed app.
+    if (host.endsWith(".railway.internal")) {
+      return `${where} (Railway private network)`;
     }
-    return (
-      `${u.hostname}:${port} (DIRECT HOST — publishes IPv6 only, ` +
-      `unreachable from IPv4 platforms like Railway; switch to the session pooler` +
-      `${userLooksPooled ? "" : "; note the pooler username is postgres.<project-ref>"})`
-    );
+    // Railway's public proxy, used by scripts run from outside Railway.
+    if (host.endsWith(".rlwy.net") || host.includes("proxy.rlwy")) {
+      return `${where} (Railway public proxy)`;
+    }
+    if (host.includes("pooler.supabase.com")) {
+      return `${where} (Supabase ${port === "6543" ? "transaction" : "session"} pooler)`;
+    }
+    // ONLY Supabase's direct host carries the IPv6 warning. An earlier version
+    // applied it to every unrecognised host, which told Peter to "fix" a
+    // Railway connection that was working perfectly at 3ms.
+    if (/^db\..*\.supabase\.co$/.test(host)) {
+      const userLooksPooled = u.username.includes(".");
+      return (
+        `${where} (Supabase DIRECT host — publishes IPv6 only, unreachable from ` +
+        `IPv4 platforms like Railway; use the session pooler` +
+        `${userLooksPooled ? "" : "; its username is postgres.<project-ref>"})`
+      );
+    }
+    if (host === "localhost" || host === "127.0.0.1") return `${where} (local)`;
+    return where;
   } catch {
     return "DATABASE_URL is not a valid URL";
   }
