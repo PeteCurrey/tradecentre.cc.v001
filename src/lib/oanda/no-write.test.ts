@@ -73,6 +73,94 @@ describe("OANDA client is read-only by construction", () => {
   });
 });
 
+describe("execution is quarantined from the read path", () => {
+  /**
+   * Autonomous execution exists in this codebase, so the read-only guarantee
+   * above is only meaningful if the write-capable module cannot be reached
+   * from the read path by accident.
+   */
+  const EXEC = "src/lib/oanda/execution.ts";
+  const EXEC_SRC = readFileSync(join(process.cwd(), EXEC), "utf8");
+
+  function walkAll(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walkAll(full, out);
+      else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(full);
+    }
+    return out;
+  }
+
+  const files = walkAll(join(process.cwd(), "src"));
+  const rel = (f: string) => f.replace(process.cwd() + "/", "");
+
+  it("the read client never imports the execution client", () => {
+    assert.ok(
+      !CLIENT_SRC.includes("execution"),
+      "client.ts must not reference the execution module",
+    );
+  });
+
+  it("execution is guarded by server-only", () => {
+    assert.ok(/^import\s+["']server-only["'];/m.test(EXEC_SRC));
+  });
+
+  it("no client component can import the execution module", () => {
+    const offenders = files.filter((f) => {
+      const src = readFileSync(f, "utf8");
+      return (
+        /^\s*["']use client["']/m.test(src) && /from\s+["'].*oanda\/execution/.test(src)
+      );
+    });
+    assert.deepEqual(offenders.map(rel), []);
+  });
+
+  it("execution is the ONLY module that writes to OANDA", () => {
+    // Any other file issuing a POST/PUT/PATCH/DELETE to an OANDA host would
+    // sit outside the guard system entirely.
+    const offenders: string[] = [];
+    for (const f of files) {
+      if (rel(f) === EXEC) continue;
+      const code = stripComments(readFileSync(f, "utf8"));
+      const writesToOanda =
+        /method:\s*["'`](POST|PUT|PATCH|DELETE)["'`]/i.test(code) &&
+        /oanda|fxtrade|fxpractice/i.test(code);
+      if (writesToOanda) offenders.push(rel(f));
+    }
+    assert.deepEqual(offenders, [], `unguarded OANDA writes found`);
+  });
+
+  it("every write path requires a GuardApproval", () => {
+    // submitMarketOrder takes an approval, which only approveOrder() can mint,
+    // so the guards cannot be bypassed by forgetting to call them.
+    assert.match(
+      EXEC_SRC,
+      /submitMarketOrder\(\s*approval:\s*GuardApproval/,
+      "submitMarketOrder must require a GuardApproval",
+    );
+  });
+
+  it("sending is opt-in on every write, never a stored mode", () => {
+    for (const method of ["submitMarketOrder", "closeTrade"]) {
+      const re = new RegExp(`${method}\\([\\s\\S]{0,200}?send:\\s*boolean`);
+      assert.match(EXEC_SRC, re, `${method} must take an explicit send flag`);
+    }
+    assert.ok(
+      !/send\s*=\s*true/.test(stripComments(EXEC_SRC)),
+      "send must never default to true",
+    );
+  });
+
+  it("only approveOrder can mint an approval", () => {
+    const GUARDS_SRC = readFileSync(
+      join(process.cwd(), "src/lib/execution/guards.ts"),
+      "utf8",
+    );
+    const casts = [...stripComments(GUARDS_SRC).matchAll(/as GuardApproval/g)];
+    assert.equal(casts.length, 1, "GuardApproval should be constructed in exactly one place");
+  });
+});
+
 describe("environment secrets are never publicly exposed", () => {
   const ENV_SRC = readFileSync(join(process.cwd(), "src/lib/env.ts"), "utf8");
 

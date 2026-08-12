@@ -437,6 +437,99 @@ export const macroEvents = pgTable(
 );
 
 /* ==========================================================================
+   AUTONOMOUS EXECUTION
+   --------------------------------------------------------------------------
+   Separate from everything above on purpose. The read path never touches these
+   tables, and nothing here is required for the journal to work.
+   ========================================================================== */
+
+export const armStateEnum = pgEnum("arm_state", ["disarmed", "armed", "halted"]);
+
+/**
+ * Arm state, per book. Defaults to disarmed and stays that way until an
+ * explicit action — there is no configuration that starts the engine trading.
+ *
+ * `halted` is distinct from `disarmed`: it means a guard tripped (usually the
+ * daily loss limit) and requires deliberate re-arming rather than resuming on
+ * its own at midnight.
+ */
+export const executionState = pgTable("execution_state", {
+  book: bookEnum("book").primaryKey(),
+  state: armStateEnum("state").notNull().default("disarmed"),
+  /** Practice-only unless deliberately unlocked. Guards read this, not env. */
+  allowLiveCapital: boolean("allow_live_capital").notNull().default(false),
+  /** Only these instruments may be traded. Empty = nothing is permitted. */
+  instrumentAllowlist: jsonb("instrument_allowlist").$type<string[]>().notNull().default([]),
+  maxOpenPositions: smallint("max_open_positions").notNull().default(2),
+  /** Ceiling on a single order as a multiple of the book's base risk. */
+  maxRiskMultiple: numeric("max_risk_multiple", { precision: 5, scale: 2 })
+    .notNull()
+    .default("1.50"),
+  /** Which patterns this book is allowed to trade. Empty = none. */
+  enabledPatternIds: jsonb("enabled_pattern_ids").$type<number[]>().notNull().default([]),
+  haltedReason: text("halted_reason"),
+  armedAt: timestamp("armed_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const orderOutcomeEnum = pgEnum("order_outcome", [
+  "rejected_by_guard",
+  "dry_run",
+  "submitted",
+  "filled",
+  "broker_rejected",
+  "error",
+]);
+
+/**
+ * Every order the engine considered — including the ones it refused to send.
+ *
+ * Rejections are recorded as deliberately as fills: "why did it NOT trade?" is
+ * as important as "why did it trade?", and without the rejected attempts the
+ * guards are unfalsifiable.
+ */
+export const orderLog = pgTable(
+  "order_log",
+  {
+    id: serial("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    book: bookEnum("book").notNull(),
+    patternId: integer("pattern_id").references(() => patterns.id, {
+      onDelete: "set null",
+    }),
+
+    instrument: text("instrument").notNull(),
+    direction: directionEnum("direction").notNull(),
+    units: numeric("units", { precision: 20, scale: 6 }).notNull(),
+    requestedStop: numeric("requested_stop", { precision: 20, scale: 8 }),
+    requestedTarget: numeric("requested_target", { precision: 20, scale: 8 }),
+    /** Intended risk in account currency at the moment of the decision. */
+    intendedRisk: numeric("intended_risk", { precision: 20, scale: 6 }),
+
+    outcome: orderOutcomeEnum("outcome").notNull(),
+    /** Which guard refused it, when one did. */
+    rejectedBy: text("rejected_by"),
+    reason: text("reason"),
+
+    /** OANDA's ids, once an order actually reaches the broker. */
+    oandaOrderId: text("oanda_order_id"),
+    oandaTradeId: text("oanda_trade_id"),
+    /** Full request and response, for reconstructing any decision after the fact. */
+    request: jsonb("request").$type<Record<string, unknown>>(),
+    response: jsonb("response").$type<Record<string, unknown>>(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("order_log_created_idx").on(t.createdAt),
+    index("order_log_book_idx").on(t.book),
+    index("order_log_outcome_idx").on(t.outcome),
+    // Supports the duplicate-order guard, which looks for a matching recent order.
+    index("order_log_dedupe_idx").on(t.accountId, t.instrument, t.createdAt),
+  ],
+);
+
+/* ==========================================================================
    AI
    ========================================================================== */
 
