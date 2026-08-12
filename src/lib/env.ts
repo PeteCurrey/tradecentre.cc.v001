@@ -45,6 +45,31 @@ function resolve(canonical: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Pick the database URL that is actually reachable from here.
+ *
+ * Railway exposes the same database twice: `postgres.railway.internal` (private,
+ * fast, and the right choice for the deployed app) and a public proxy host.
+ * The internal name does not resolve outside Railway, so migrations and sync
+ * scripts run from a laptop cannot use it.
+ *
+ * Railway sets RAILWAY_ENVIRONMENT in its own runtime, which makes "am I inside
+ * Railway?" a reliable check rather than a guess. Keeping both variables set
+ * means one .env.local works in both places.
+ */
+function resolveDatabaseUrl(): string | undefined {
+  const primary = resolve("DATABASE_URL");
+  const publicUrl = process.env.DATABASE_PUBLIC_URL?.trim();
+
+  if (!primary) return publicUrl;
+
+  const insideRailway = Boolean(process.env.RAILWAY_ENVIRONMENT);
+  const isInternal = primary.includes(".railway.internal");
+
+  if (isInternal && !insideRailway && publicUrl) return publicUrl;
+  return primary;
+}
+
 const schema = z.object({
   DATABASE_URL: z.string().url(),
 
@@ -92,6 +117,9 @@ export function env(): Env {
 
   const raw: Record<string, string | undefined> = { NODE_ENV: process.env.NODE_ENV };
   for (const canonical of Object.keys(ALIASES)) raw[canonical] = resolve(canonical);
+  // Overrides the plain alias lookup: which database URL is reachable depends
+  // on whether we are running inside Railway.
+  raw.DATABASE_URL = resolveDatabaseUrl();
 
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
