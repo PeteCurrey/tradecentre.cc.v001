@@ -37,8 +37,13 @@ export async function loadTrades(opts: LoadOptions = {}): Promise<AnalyticsTrade
 
   // Fall back to whatever accounts exist when none match the requested
   // environment — every account today is practice, and an analytics screen that
-  // renders empty because of an environment label would be lying about the data
-  // that is actually there.
+  // renders empty because of an environment label would be hiding the data that
+  // is actually there.
+  //
+  // ⚠️ This fallback means "live" figures can be practice figures. That is a
+  // real hazard, not a convenience: it is the one path by which demo data can
+  // be read as live. `activeEnvironment()` reports when it is happening, and
+  // every screen that makes a money claim says so on the page.
   const usable =
     accountRows.length > 0
       ? accountRows
@@ -91,6 +96,23 @@ export async function loadTrades(opts: LoadOptions = {}): Promise<AnalyticsTrade
     processGrade: a?.processGrade ?? null,
     mistakes: a?.mistakes ?? [],
   }));
+}
+
+/**
+ * Which environment the "live" figures are actually coming from.
+ *
+ * Returns "practice" when no live account exists and the fallback above is in
+ * play. Screens use this to say plainly that the numbers are demo money —
+ * silently labelling practice results as live is exactly the confusion the
+ * demo/live separation exists to prevent.
+ */
+export async function activeEnvironment(): Promise<"live" | "practice"> {
+  const rows = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.environment, "live"), eq(accounts.active, true)))
+    .limit(1);
+  return rows.length > 0 ? "live" : "practice";
 }
 
 /** Account currency for display. One currency across the books in practice. */

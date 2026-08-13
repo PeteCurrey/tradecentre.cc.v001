@@ -5,6 +5,7 @@ import {
   MAX_PAGES,
   collectPages,
   expectedBarsPerYear,
+  resolveResumeStart,
   type PageFetcher,
   type RawCandle,
 } from "./pagination";

@@ -15,7 +15,8 @@ import { approveOrder, type ExecutionConfig, type OrderIntent, type RecentOrder 
 import { nextAction, type ManagedPosition, type ManagementRules } from "./manage";
 import { BOOK_IDS, type BookId } from "@/lib/books";
 import { BarContext } from "@/lib/patterns/evaluate";
-import type { Condition, ManagementRule, StopRule } from "@/lib/patterns/dsl";
+import { announce, evaluateClauses, ScanCollector } from "./telemetry";
+import type { Condition, ManagementRule, StopRule, TargetRule } from "@/lib/patterns/dsl";
 import type { Bar } from "@/lib/indicators";
 import { DISPLAY_TZ, partsIn } from "@/lib/time";
 import { RATE_LIMIT_WINDOW_MS } from "./guards";
@@ -49,15 +50,17 @@ export type TickResult = {
 const SCAN_GRANULARITY = "M5";
 const SCAN_BARS = 400;
 
-export async function runTick(): Promise<TickResult[]> {
+export async function runTick(opts: TickOptions = {}): Promise<TickResult[]> {
   const results: TickResult[] = [];
+
+  // Collected across every book so the browser receives one coherent picture of
+  // the whole tick rather than a push per book.
+  const scan = new ScanCollector();
 
   const states = await db
     .select()
     .from(executionState)
     .where(eq(executionState.state, "armed"));
-
-  if (states.length === 0) return results;
 
   for (const state of states) {
     const result: TickResult = {
@@ -70,7 +73,7 @@ export async function runTick(): Promise<TickResult[]> {
     };
 
     try {
-      await runBook(state, result);
+      await runBook(state, result, scan);
     } catch (e) {
       // One book failing must never stop the others — particularly since the
       // others may have open positions that still need managing.
@@ -79,13 +82,31 @@ export async function runTick(): Promise<TickResult[]> {
     results.push(result);
   }
 
+  // Published even when nothing is armed. A tick that found nothing still
+  // proves the loop is alive, which is most of what this telemetry is for.
+  scan.publish({
+    nextAt: opts.nextTickAt ?? Date.now(),
+    marketOpen: opts.marketOpen ?? true,
+  });
+
   return results;
 }
 
+export type TickOptions = {
+  /** When the next tick is due, so the UI can run an honest countdown. */
+  nextTickAt?: number;
+  marketOpen?: boolean;
+};
+
 type StateRow = typeof executionState.$inferSelect;
 
-async function runBook(state: StateRow, result: TickResult): Promise<void> {
+async function runBook(
+  state: StateRow,
+  result: TickResult,
+  scan: ScanCollector,
+): Promise<void> {
   const book = state.book as BookId;
+  scan.noteBook(book);
 
   const [account] = await db
     .select()
@@ -158,6 +179,22 @@ async function runBook(state: StateRow, result: TickResult): Promise<void> {
 
     if (!action) continue;
     result.managed++;
+
+    announce({
+      kind: "managed",
+      book,
+      instrument: t.instrument,
+      headline:
+        action.kind === "flatten"
+          ? `Flattening ${t.instrument}`
+          : action.kind === "scaleOut"
+            ? `Scaling out of ${t.instrument}`
+            : `Stop moved on ${t.instrument}`,
+      detail: action.reason,
+      oandaTradeId: t.id,
+      patternName: null,
+      sent: send,
+    });
 
     try {
       if (action.kind === "flatten") {
@@ -251,20 +288,61 @@ async function runBook(state: StateRow, result: TickResult): Promise<void> {
       const trigger = (pattern.triggerRules as Condition[])[0];
       if (!trigger) continue;
 
-      const fired = ctx.evaluate(trigger);
-      // Only the most recently CLOSED bar. Acting on a forming bar would be
-      // reacting to a signal that can still disappear before the bar closes.
-      if (!fired[last]) continue;
-
       const cfgFilters = pattern.contextFilters as {
         direction?: "long" | "short";
         stop?: StopRule;
+        targets?: TargetRule[];
       };
       const direction = cfgFilters.direction ?? "long";
       const entry = bars[last].c;
 
+      /**
+       * Clause-by-clause state, for the scan panel.
+       *
+       * Evaluated through the same memoised BarContext the entry decision uses,
+       * so a clause reported as met is met by the identical code path that
+       * would fire the order — the telemetry cannot drift from the behaviour.
+       */
+      const conditions = evaluateClauses(ctx, trigger, last);
+      const candidate = {
+        book,
+        instrument,
+        patternId: pattern.id,
+        patternName: pattern.name,
+        direction,
+        conditions,
+        barTime: bars[last].time,
+      };
+
+      const fired = ctx.evaluate(trigger);
+      // Only the most recently CLOSED bar. Acting on a forming bar would be
+      // reacting to a signal that can still disappear before the bar closes.
+      if (!fired[last]) {
+        scan.note({ ...candidate, blockedBy: null, blockedReason: null });
+        continue;
+      }
+
       const stopPrice = resolveStop(cfgFilters.stop, ctx, last, entry, direction);
-      if (stopPrice === null) continue;
+      if (stopPrice === null) {
+        // Fired, but the pattern's own stop rule produced nothing usable. Shown
+        // as blocked rather than dropped: a pattern that triggers and can never
+        // be sized is a definition bug worth seeing.
+        scan.note({
+          ...candidate,
+          blockedBy: "stop",
+          blockedReason: "Triggered, but the pattern's stop rule resolved to nothing",
+        });
+        continue;
+      }
+
+      const targetPrice = resolveTarget(
+        cfgFilters.targets?.[0],
+        ctx,
+        last,
+        entry,
+        stopPrice,
+        direction,
+      );
 
       const units = sizeOrder({
         equity: Number(summary.NAV),
@@ -282,7 +360,7 @@ async function runBook(state: StateRow, result: TickResult): Promise<void> {
         direction,
         units,
         stopPrice,
-        targetPrice: null,
+        targetPrice,
         entryPrice: entry,
         patternId: pattern.id,
       };
@@ -303,6 +381,11 @@ async function runBook(state: StateRow, result: TickResult): Promise<void> {
 
       if (!approval.approved) {
         result.rejected++;
+        scan.note({
+          ...candidate,
+          blockedBy: approval.guard,
+          blockedReason: approval.reason,
+        });
         await logOrder({
           account,
           book,
@@ -311,12 +394,27 @@ async function runBook(state: StateRow, result: TickResult): Promise<void> {
           direction,
           units,
           requestedStop: stopPrice,
+          requestedTarget: targetPrice,
           outcome: "rejected_by_guard",
           rejectedBy: approval.guard,
           reason: approval.reason,
         });
+        announce({
+          kind: "rejected",
+          book,
+          instrument,
+          headline: `${instrument} blocked by ${approval.guard}`,
+          detail: approval.reason,
+          oandaTradeId: null,
+          patternName: pattern.name,
+          sent: false,
+        });
         continue;
       }
+
+      // Approved and about to be sent — it belongs at the top of the panel as a
+      // decision, not buried among the near-misses.
+      scan.note({ ...candidate, blockedBy: null, blockedReason: null });
 
       try {
         const r = await exec.submitMarketOrder(approval.approval, send);
@@ -332,9 +430,25 @@ async function runBook(state: StateRow, result: TickResult): Promise<void> {
           direction,
           units,
           requestedStop: stopPrice,
+          requestedTarget: targetPrice,
           outcome: send ? (r.ok ? "submitted" : "broker_rejected") : "dry_run",
           reason: `${pattern.name} triggered`,
           result: r,
+        });
+        announce({
+          kind: "fill",
+          book,
+          instrument,
+          headline: send
+            ? `${direction === "long" ? "Long" : "Short"} ${instrument}`
+            : `Dry run: ${direction} ${instrument}`,
+          detail:
+            `${pattern.name} · ${Math.abs(units).toLocaleString()} units · ` +
+            `stop ${stopPrice.toPrecision(6)}` +
+            (targetPrice !== null ? ` · target ${targetPrice.toPrecision(6)}` : " · no target"),
+          oandaTradeId: r.oandaTradeId,
+          patternName: pattern.name,
+          sent: send && r.ok,
         });
       } catch (e) {
         result.errors.push(`submit ${instrument}: ${(e as Error).message}`);
@@ -394,6 +508,50 @@ function resolveStop(
   if (direction === "long" && stop >= entry) return null;
   if (direction === "short" && stop <= entry) return null;
   return stop;
+}
+
+/**
+ * Resolve the pattern's first target into a take-profit price.
+ *
+ * Only the FIRST target is attached to the order. Later targets are what the
+ * management rules scale out into, and attaching them all would close the whole
+ * position at the nearest one — the opposite of the intent.
+ *
+ * `timeStop` deliberately yields no price: "exit after N bars" is not a level,
+ * and inventing one to satisfy the order payload would attach a take-profit the
+ * pattern never asked for. Those patterns run stop-only and exit through the
+ * management rules, which is what a time stop means.
+ *
+ * A target on the wrong side of entry is refused rather than sent. OANDA would
+ * reject it anyway, but rejecting here means the order still goes out with its
+ * stop attached instead of failing wholesale over the optional half.
+ */
+function resolveTarget(
+  rule: TargetRule | undefined,
+  ctx: BarContext,
+  i: number,
+  entry: number,
+  stopPrice: number,
+  direction: "long" | "short",
+): number | null {
+  if (!rule) return null;
+
+  let target: number;
+  if (rule.kind === "rMultiple") {
+    const risk = Math.abs(entry - stopPrice);
+    if (!(risk > 0)) return null;
+    target = direction === "long" ? entry + rule.r * risk : entry - rule.r * risk;
+  } else if (rule.kind === "series") {
+    const value = ctx.series(rule.at)[i];
+    if (!Number.isFinite(value)) return null;
+    target = value;
+  } else {
+    return null;
+  }
+
+  if (direction === "long" && target <= entry) return null;
+  if (direction === "short" && target >= entry) return null;
+  return target;
 }
 
 async function fetchBars(
@@ -516,6 +674,7 @@ async function logOrder(o: {
   direction: "long" | "short";
   units: number;
   requestedStop?: number | null;
+  requestedTarget?: number | null;
   outcome: typeof orderLog.$inferInsert.outcome;
   rejectedBy?: string;
   reason: string;
@@ -529,6 +688,7 @@ async function logOrder(o: {
     direction: o.direction,
     units: String(o.units),
     requestedStop: o.requestedStop != null ? String(o.requestedStop) : null,
+    requestedTarget: o.requestedTarget != null ? String(o.requestedTarget) : null,
     outcome: o.outcome,
     rejectedBy: o.rejectedBy ?? null,
     reason: o.reason,

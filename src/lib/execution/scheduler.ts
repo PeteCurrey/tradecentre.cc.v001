@@ -84,14 +84,30 @@ async function tick(): Promise<void> {
     return;
   }
 
-  if (!(await anyBookArmed())) return;
-  if (!marketOpen()) return;
+  const open = marketOpen();
+
+  /**
+   * A skipped tick still reports itself.
+   *
+   * Nothing armed, or the market shut, is a REASON — and a scan panel that goes
+   * silent looks identical to one that has crashed. Publishing an empty scan
+   * says "I ran, there was nothing to do", which is the distinction the whole
+   * telemetry surface exists to make.
+   */
+  if (!(await anyBookArmed()) || !open) {
+    const { publishIdleScan } = await import("./telemetry");
+    publishIdleScan({ nextAt: Date.now() + TICK_INTERVAL_MS, marketOpen: open });
+    return;
+  }
 
   inFlight = true;
   const started = Date.now();
   try {
     const { runTick } = await import("./engine");
-    const results = await runTick();
+    const results = await runTick({
+      nextTickAt: Date.now() + TICK_INTERVAL_MS,
+      marketOpen: open,
+    });
 
     status.ticks++;
     status.lastTickAt = new Date().toISOString();

@@ -1,11 +1,11 @@
 import { requireSession } from "@/lib/auth/guard";
-import { loadTrades } from "@/lib/analytics/load";
+import { activeEnvironment, loadTrades } from "@/lib/analytics/load";
 import { groupBy, summarise } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import { BarRows } from "@/components/charts/Plot";
-import { BookFilter, ClusterNote, NoTrades } from "@/components/analytics/Shared";
+import { BookFilter, ClusterNote, NoTrades, PracticeNote } from "@/components/analytics/Shared";
 import { BOOK_IDS, HORIZONS, type HorizonId } from "@/lib/books";
 import { DISPLAY_TZ, SESSIONS, partsIn } from "@/lib/time";
 import { clsx } from "@/lib/clsx";
@@ -35,7 +35,10 @@ export default async function SessionsPage({
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
-  const trades = await loadTrades({ book });
+  const [trades, environment] = await Promise.all([
+    loadTrades({ book }),
+    activeEnvironment(),
+  ]);
   const s = summarise(trades);
 
   const hourOf = (d: Date) => partsIn(d, DISPLAY_TZ).hour;
@@ -103,6 +106,7 @@ export default async function SessionsPage({
         subtitle={`${trades.length} closed trades, bucketed by entry time in London`}
       />
       <BookFilter base="/sessions" active={book} />
+      <PracticeNote environment={environment} />
 
       {trades.length === 0 ? (
         <NoTrades what="No closed trades in this book yet." />

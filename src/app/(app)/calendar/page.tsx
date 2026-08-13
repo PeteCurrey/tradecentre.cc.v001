@@ -1,11 +1,15 @@
 import { requireSession } from "@/lib/auth/guard";
-import { accountCurrency, loadTrades } from "@/lib/analytics/load";
+import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { summarise, type AnalyticsTrade } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { Money, RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
-import { BookFilter, NoTrades } from "@/components/analytics/Shared";
-import { Chip } from "@/components/analytics/Shared";
+import {
+  BookFilter,
+  Chip,
+  NoTrades,
+  PracticeNote,
+} from "@/components/analytics/Shared";
 import { BOOK_IDS } from "@/lib/books";
 import { brokerDayKey, dayKey } from "@/lib/time";
 import { clsx } from "@/lib/clsx";
@@ -32,9 +36,10 @@ export default async function CalendarPage({
   const book = BOOK_IDS.find((b) => b === params.book);
   const useBroker = params.boundary === "broker";
 
-  const [trades, currency] = await Promise.all([
+  const [trades, currency, environment] = await Promise.all([
     loadTrades({ book }),
     accountCurrency(),
+    activeEnvironment(),
   ]);
 
   const closed = trades.filter((t) => t.exitTime !== null);
@@ -90,6 +95,7 @@ export default async function CalendarPage({
         subtitle={`${days.length} trading days · ${winningDays} up, ${losingDays} down`}
       />
       <BookFilter base="/calendar" active={book} extra={useBroker ? "&boundary=broker" : ""} />
+      <PracticeNote environment={environment} />
 
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
         <span className="label-faint mr-1">Day boundary</span>

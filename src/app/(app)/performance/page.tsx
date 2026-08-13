@@ -1,6 +1,6 @@
 
 import { requireSession } from "@/lib/auth/guard";
-import { accountCurrency, loadTrades } from "@/lib/analytics/load";
+import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import {
   convictionEdge,
   drawdowns,
@@ -15,7 +15,7 @@ import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { Money, RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import { AreaLine, BarRows, Histogram, UnderwaterPlot } from "@/components/charts/Plot";
-import { BookFilter, ClusterNote, NoTrades } from "@/components/analytics/Shared";
+import { BookFilter, ClusterNote, NoTrades, PracticeNote } from "@/components/analytics/Shared";
 import { BOOKS, BOOK_IDS, HORIZONS, type BookId, type HorizonId } from "@/lib/books";
 import { clsx } from "@/lib/clsx";
 
@@ -30,9 +30,10 @@ export default async function PerformancePage({
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
-  const [trades, currency] = await Promise.all([
+  const [trades, currency, environment] = await Promise.all([
     loadTrades({ book }),
     accountCurrency(),
+    activeEnvironment(),
   ]);
 
   const s = summarise(trades);
@@ -66,6 +67,7 @@ export default async function PerformancePage({
         subtitle={`${s.trades} closed trades · ${s.independentExits} independent exits`}
       />
       <BookFilter base="/performance" active={book} />
+      <PracticeNote environment={environment} />
 
       {trades.length === 0 ? (
         <NoTrades what="No closed trades in this book yet." />

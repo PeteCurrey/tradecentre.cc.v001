@@ -1,6 +1,6 @@
 import { Download } from "lucide-react";
 import { requireSession } from "@/lib/auth/guard";
-import { accountCurrency, loadTrades } from "@/lib/analytics/load";
+import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import {
   equityCurve,
   groupBy,
@@ -12,7 +12,7 @@ import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { Money, RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import { AreaLine } from "@/components/charts/Plot";
-import { BookFilter, ClusterNote, NoTrades } from "@/components/analytics/Shared";
+import { BookFilter, ClusterNote, NoTrades, PracticeNote } from "@/components/analytics/Shared";
 import { BOOK_IDS } from "@/lib/books";
 import { DISPLAY_TZ, dayKey } from "@/lib/time";
 
@@ -35,9 +35,10 @@ export default async function ReportsPage({
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
-  const [trades, currency] = await Promise.all([
+  const [trades, currency, environment] = await Promise.all([
     loadTrades({ book }),
     accountCurrency(),
+    activeEnvironment(),
   ]);
 
   const closed = trades.filter((t) => t.exitTime !== null);
@@ -88,6 +89,7 @@ export default async function ReportsPage({
         }
       />
       <BookFilter base="/reports" active={book} />
+      <PracticeNote environment={environment} />
 
       {closed.length === 0 ? (
         <NoTrades what="No closed trades to report on yet." />

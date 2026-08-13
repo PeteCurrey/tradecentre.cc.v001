@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/auth/guard";
-import { accountCurrency, loadTrades } from "@/lib/analytics/load";
+import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { summarise } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { Money, RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import { BarRows } from "@/components/charts/Plot";
-import { BookFilter, NoTrades } from "@/components/analytics/Shared";
+import { BookFilter, NoTrades, PracticeNote } from "@/components/analytics/Shared";
 import { BOOK_IDS } from "@/lib/books";
 import {
   MISTAKE_CATEGORIES,
@@ -37,9 +37,10 @@ export default async function MistakesPage({
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
-  const [trades, currency] = await Promise.all([
+  const [trades, currency, environment] = await Promise.all([
     loadTrades({ book }),
     accountCurrency(),
+    activeEnvironment(),
   ]);
 
   const annotated = trades.filter((t) => t.mistakes.length > 0 || t.processGrade !== null);
@@ -80,6 +81,7 @@ export default async function MistakesPage({
         subtitle={`${withMistakes.length} of ${trades.length} closed trades carry a mistake tag`}
       />
       <BookFilter base="/mistakes" active={book} />
+      <PracticeNote environment={environment} />
 
       {trades.length === 0 ? (
         <NoTrades what="No closed trades in this book yet." />

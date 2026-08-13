@@ -42,14 +42,35 @@ export async function GET(req: Request) {
         }
       };
 
-      // Prime the client so it isn't blank until the next tick arrives.
+      /**
+       * Prime the client so it isn't blank until the next push arrives.
+       *
+       * The desk push in particular can be up to five seconds away, and a hero
+       * that renders empty for five seconds on every navigation is exactly the
+       * "is this thing working?" impression this feed exists to dispel.
+       */
       send("status", { state: hub.connectionState });
       for (const tick of hub.snapshot) send("tick", tick);
+      if (hub.deskSnapshot) send("desk", hub.deskSnapshot);
+      if (hub.scanSnapshot) send("scan", hub.scanSnapshot);
 
       unsubscribe = hub.subscribe((e) => {
         if (e.type === "tick") send("tick", e.tick);
         else if (e.type === "status") send("status", { state: e.state, detail: e.detail });
         else if (e.type === "transaction") send("transaction", e);
+        else if (e.type === "desk") send("desk", e.desk);
+        else if (e.type === "scan") send("scan", e.scan);
+        else if (e.type === "engine") send("engine", e.event);
+      });
+
+      /**
+       * A browser connecting is the one moment a stale desk push is most
+       * visible, so refresh it rather than waiting out the interval. Deliberately
+       * not awaited: the response headers should go out now, and the push will
+       * arrive over the stream that is already open.
+       */
+      void import("@/lib/desk/broadcast").then((m) => m.broadcastNow()).catch(() => {
+        /* the periodic loop will cover it */
       });
 
       // Proxies drop idle connections; a comment line keeps it warm without

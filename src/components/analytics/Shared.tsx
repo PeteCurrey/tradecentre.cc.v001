@@ -89,6 +89,28 @@ export function ClusterNote({
   );
 }
 
+/**
+ * Shown whenever the figures on a money screen are practice money.
+ *
+ * No live OANDA account is connected yet, so the analytics loader falls back to
+ * the practice books rather than rendering every screen empty. That is the one
+ * path by which demo results could be read as live, so every screen that makes
+ * a money claim says so out loud instead of relying on the reader to remember.
+ */
+export function PracticeNote({ environment }: { environment: "live" | "practice" }) {
+  if (environment === "live") return null;
+  return (
+    <div className="mb-4 flex items-start gap-2.5 rounded-[var(--radius-tile)] border border-[var(--color-warn)]/40 bg-[var(--color-warn-wash)] px-3.5 py-2.5">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--color-warn)]" />
+      <p className="text-xs leading-relaxed text-[var(--color-warn)]">
+        <strong>These are practice figures.</strong> No live OANDA account is connected, so
+        every number on this page comes from the demo books. Demo never aggregates with live
+        — once a live account is mapped, these figures will not be included in it.
+      </p>
+    </div>
+  );
+}
+
 /** Shown when a screen has no data rather than rendering zeroed-out charts. */
 export function NoTrades({ what }: { what: string }) {
   return (

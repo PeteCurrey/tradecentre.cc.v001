@@ -2,13 +2,13 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
 import { patterns as patternsTable } from "@/lib/db/schema";
-import { accountCurrency, loadTrades } from "@/lib/analytics/load";
+import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { groupBy, summarise } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { Money, RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import { BarRows } from "@/components/charts/Plot";
-import { BookFilter, ClusterNote, NoTrades } from "@/components/analytics/Shared";
+import { BookFilter, ClusterNote, NoTrades, PracticeNote } from "@/components/analytics/Shared";
 import { BOOK_IDS } from "@/lib/books";
 import { clsx } from "@/lib/clsx";
 
@@ -30,10 +30,11 @@ export default async function PatternPerformancePage({
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
-  const [trades, patterns, currency] = await Promise.all([
+  const [trades, patterns, currency, environment] = await Promise.all([
     loadTrades({ book }),
     db.select().from(patternsTable),
     accountCurrency(),
+    activeEnvironment(),
   ]);
 
   const name = new Map(patterns.map((p) => [p.id, p]));
@@ -62,6 +63,7 @@ export default async function PatternPerformancePage({
         }
       />
       <BookFilter base="/pattern-performance" active={book} />
+      <PracticeNote environment={environment} />
 
       {trades.length === 0 ? (
         <NoTrades what="No closed trades in this book yet." />
