@@ -281,7 +281,7 @@ function MonthGrid({
             <div
               key={key}
               className={clsx(
-                "relative aspect-square rounded-lg border p-1.5",
+                "relative min-h-[4.5rem] rounded-lg border p-1.5",
                 d
                   ? "border-[var(--color-line-strong)]"
                   : "border-[var(--color-line)]/50",

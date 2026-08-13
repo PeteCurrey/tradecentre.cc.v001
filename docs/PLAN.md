@@ -719,6 +719,48 @@ the original number was selection.
 than proof of no edge. Also, OANDA's spread today is not 2008's — costs are held at today's
 measured values, which is optimistic for the early years.
 
+### 📋 Result: `swing-bos-retest` on XAU_USD H4 — **FAILED**
+
+Run 13 Aug 2026 against XAU_USD H4, **2006-03-19 → 2018-12-31**, 20,582 bars that played no part
+in selecting this pattern. Criteria were fixed in advance and are unaltered above.
+
+| Metric | In-sample (2019–26) | Out-of-sample (2006–18) |
+|---|---|---|
+| Trades | 263 | **427** (predicted ~450) |
+| Avg R | 0.132 | **0.0119** |
+| Win rate | 39% | 33.0% |
+| Total R | +34.6 | **+5.09** |
+| Consistency | 5/6 | **3/6** |
+| p | 0.007 | **0.343** |
+
+| Criterion | Result |
+|---|---|
+| ≥ 30 trades | ✅ 427 |
+| Total R > 0 | ✅ +5.09 |
+| Consistency ≥ 0.66 | ❌ 0.500 |
+| p < 0.05 | ❌ 0.343 |
+
+**Verdict: failed.** Expectancy shrank by 91%, from 0.132R to 0.012R. Total return is +5.09R over
+**twelve years and nine months** — economically indistinguishable from zero, and the "total R > 0"
+pass is a technicality rather than a finding.
+
+Per-window, the decay is plain: +5.7R and +6.2R in 2006–2010, then 0.4, −4.7, −0.5, −2.0. Whatever
+was there belongs to the post-GFC gold bull and did not survive into the decade after it. This is
+*not* the regime-specific failure the pre-registration allowed for — four of six windows are
+non-positive and the two positive ones are the oldest.
+
+Two things make the real result worse than the table. Costs were held at today's measured XAU
+spread of 0.74, which is optimistic for 2006–2018 when spreads were wider. And the trade count came
+in close to prediction (427 vs ~450), so this is not a thin-sample artefact — the pattern traded
+plenty and simply did not make money.
+
+**What this establishes.** The q=0.138 rejection in the 100-candidate screen was correct, and the
+gate would have been right to block promotion even if Peter had overruled it. An in-sample p=0.007
+that becomes p=0.343 out-of-sample is the precise signature of selection, observed end to end. The
+screen's job is to stop numbers like +34.6R reaching live capital, and it did.
+
+Running tally: **121 candidates measured, zero edges.**
+
 ### Still to build
 
 1. Harvest → supervised Pine translation → screening.
@@ -864,3 +906,6 @@ Every decision below was made by Peter across 14 AskUserQuestion rounds.
 | 81 | `getHistory` sorts in Node, not SQL — the planner's bitmap scan forces a Sort that spills to temp files | 8e |
 | 82 | Storage ceiling ~350 MB of the 500 MB volume; no further backfill until Supabase | 8e |
 | 83 | JP225 M15 excluded from screens — truncated at 2022-04-08, different regime to the rest | 8e |
+| 84 | **Supersedes #58:** database moved to Supabase (8 GB) — Railway's 500 MB volume could not absorb a 3 MB write | 8e |
+| 85 | `DATABASE_PUBLIC_URL` removed entirely — a stale fallback silently connects to the wrong database | 8e |
+| 86 | `swing-bos-retest` XAU **failed** pre-registered OOS: 0.132R → 0.012R, p 0.007 → 0.343. Selection, not edge | 8e |

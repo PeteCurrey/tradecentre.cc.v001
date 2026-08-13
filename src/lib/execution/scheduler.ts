@@ -28,8 +28,19 @@ import { DISPLAY_TZ, partsIn } from "@/lib/time";
 /** Every 60s: the engine scans M5 bars, so faster adds calls, not information. */
 export const TICK_INTERVAL_MS = 60_000;
 
-let timer: NodeJS.Timeout | null = null;
-let inFlight = false;
+/**
+ * State lives on globalThis, not in module scope.
+ *
+ * `instrumentation.ts` and the Engine page do not necessarily get the same
+ * copy of this module — Next can load a server module more than once across
+ * bundle layers, and each copy gets its own `let`. That made the Engine screen
+ * report "Scheduler stopped" while the scheduler was demonstrably running and
+ * logging ticks, which is the wrong answer on the one screen you would consult
+ * to find out. It would also let a second copy start a second interval.
+ */
+const g = globalThis as unknown as {
+  __engineScheduler?: { timer: NodeJS.Timeout | null; inFlight: boolean; status: SchedulerStatus };
+};
 
 export type SchedulerStatus = {
   running: boolean;
@@ -41,18 +52,24 @@ export type SchedulerStatus = {
   skippedOverlaps: number;
 };
 
-const status: SchedulerStatus = {
-  running: false,
-  intervalMs: TICK_INTERVAL_MS,
-  lastTickAt: null,
-  lastTickMs: null,
-  lastError: null,
-  ticks: 0,
-  skippedOverlaps: 0,
-};
+const state = (g.__engineScheduler ??= {
+  timer: null,
+  inFlight: false,
+  status: {
+    running: false,
+    intervalMs: TICK_INTERVAL_MS,
+    lastTickAt: null,
+    lastTickMs: null,
+    lastError: null,
+    ticks: 0,
+    skippedOverlaps: 0,
+  },
+});
+
+const status = state.status;
 
 export function schedulerStatus(): SchedulerStatus {
-  return { ...status, running: timer !== null };
+  return { ...status, running: state.timer !== null };
 }
 
 /**
@@ -78,7 +95,7 @@ async function anyBookArmed(): Promise<boolean> {
 }
 
 async function tick(): Promise<void> {
-  if (inFlight) {
+  if (state.inFlight) {
     status.skippedOverlaps++;
     console.warn("[engine] previous tick still running — skipping this one");
     return;
@@ -100,7 +117,7 @@ async function tick(): Promise<void> {
     return;
   }
 
-  inFlight = true;
+  state.inFlight = true;
   const started = Date.now();
   try {
     const { runTick } = await import("./engine");
@@ -129,24 +146,24 @@ async function tick(): Promise<void> {
     status.lastError = (e as Error).message;
     console.error("[engine] tick failed:", status.lastError);
   } finally {
-    inFlight = false;
+    state.inFlight = false;
   }
 }
 
 export function startScheduler(): void {
-  if (timer) return;
-  timer = setInterval(() => {
+  if (state.timer) return;
+  state.timer = setInterval(() => {
     void tick();
   }, TICK_INTERVAL_MS);
   // Never hold the process open on the engine's account.
-  timer.unref?.();
+  state.timer.unref?.();
   status.running = true;
   console.log(`[engine] scheduler started — tick every ${TICK_INTERVAL_MS / 1000}s`);
 }
 
 export function stopScheduler(): void {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+  if (!state.timer) return;
+  clearInterval(state.timer);
+  state.timer = null;
   status.running = false;
 }

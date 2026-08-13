@@ -224,14 +224,23 @@ export async function fetchEiaSchedule(weeks = 3): Promise<FetchOutcome> {
  * something irrelevant when nothing matches.
  */
 const MACRO_TERMS = [
-  "fed", "rate", "inflation", "cpi", "recession", "gdp", "unemployment",
-  "jobs", "powell", "treasury", "tariff", "oil", "opec", "gold",
-  "dollar", "ecb", "boe", "election", "shutdown", "debt ceiling",
+  "fed", "rates?", "inflation", "cpi", "recession", "gdp", "unemployment",
+  "jobs", "powell", "treasury", "tariffs?", "oil", "opec", "gold",
+  "dollar", "ecb", "boe", "elections?", "shutdown", "debt ceiling",
 ];
 
+/**
+ * Word-boundary matching, and the boundaries are the whole point.
+ *
+ * A plain substring test put "Pittsburgh Pirates vs Miami Marlins" on a macro
+ * calendar, because "Pi-RATE-s" contains "rate". Sports fixtures beside a
+ * release schedule are not merely untidy — they make the panel look
+ * unmaintained, which is how a genuinely useful signal stops being read.
+ */
+const MACRO_RE = new RegExp(`\\b(?:${MACRO_TERMS.join("|")})\\b`, "i");
+
 function isMacro(question: string): boolean {
-  const q = question.toLowerCase();
-  return MACRO_TERMS.some((t) => q.includes(t));
+  return MACRO_RE.test(question);
 }
 
 export async function fetchPolymarket(limit = 12): Promise<FetchOutcome> {
