@@ -458,6 +458,12 @@ export const executionState = pgTable("execution_state", {
   state: armStateEnum("state").notNull().default("disarmed"),
   /** Practice-only unless deliberately unlocked. Guards read this, not env. */
   allowLiveCapital: boolean("allow_live_capital").notNull().default(false),
+  /**
+   * When true the engine computes and logs every order without sending it.
+   * Defaults true so the FIRST arming of a book is always harmless — going
+   * live is a second, deliberate click rather than a consequence of arming.
+   */
+  dryRun: boolean("dry_run").notNull().default(true),
   /** Only these instruments may be traded. Empty = nothing is permitted. */
   instrumentAllowlist: jsonb("instrument_allowlist").$type<string[]>().notNull().default([]),
   maxOpenPositions: smallint("max_open_positions").notNull().default(2),

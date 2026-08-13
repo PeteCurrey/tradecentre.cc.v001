@@ -1,0 +1,1 @@
+ALTER TABLE "execution_state" ADD COLUMN "dry_run" boolean DEFAULT true NOT NULL;

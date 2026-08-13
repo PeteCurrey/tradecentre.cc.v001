@@ -175,6 +175,89 @@ export class OandaExecutionClient {
   }
 
   /**
+   * Move the stop on an open trade.
+   *
+   * Takes the CURRENT stop and the direction, and refuses any move that would
+   * increase risk. manage.ts already clamps this, but a stop-loosening bug is
+   * expensive enough that the invariant is enforced again at the boundary
+   * where the request is actually built — defence in depth on the one property
+   * that must never fail.
+   */
+  async modifyStop(
+    accountId: string,
+    tradeId: string,
+    newStop: number,
+    send: boolean,
+    context?: { direction: "long" | "short"; currentStop: number | null },
+  ): Promise<SubmitResult> {
+    if (!Number.isFinite(newStop)) {
+      throw new ExecutionError("Refusing a non-finite stop price", 400);
+    }
+    if (context?.currentStop != null) {
+      const loosens =
+        context.direction === "long"
+          ? newStop < context.currentStop
+          : newStop > context.currentStop;
+      if (loosens) {
+        throw new ExecutionError(
+          `Refusing to move a ${context.direction} stop from ${context.currentStop} ` +
+            `to ${newStop} — that increases risk`,
+          400,
+        );
+      }
+    }
+
+    const body = { stopLoss: { price: String(newStop), timeInForce: "GTC" } };
+
+    if (!send) {
+      return {
+        sent: false,
+        ok: true,
+        status: 0,
+        request: { tradeId, ...body },
+        response: null,
+        oandaOrderId: null,
+        oandaTradeId: tradeId,
+        error: null,
+      };
+    }
+
+    const url = new URL(
+      `/v3/accounts/${accountId}/trades/${tradeId}/orders`,
+      HOSTS[this.environment],
+    );
+
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token(this.environment)}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+
+    const text = await res.text().catch(() => "");
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+    } catch {
+      /* captured in `error` */
+    }
+
+    return {
+      sent: true,
+      ok: res.ok,
+      status: res.status,
+      request: { tradeId, ...body },
+      response: parsed,
+      oandaOrderId: null,
+      oandaTradeId: tradeId,
+      error: res.ok ? null : text.slice(0, 500) || `HTTP ${res.status}`,
+    };
+  }
+
+  /**
    * Close an open trade.
    *
    * Takes an explicit trade id rather than an approval: closing reduces risk,
