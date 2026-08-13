@@ -3,10 +3,8 @@
   "configurations": [
     {
       "name": "desk",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000,
-      "autoPort": true
+      "url": "http://localhost:3111",
+      "port": 3111
     }
   ]
 }

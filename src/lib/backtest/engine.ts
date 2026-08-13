@@ -42,27 +42,49 @@ export type Costs = {
 /**
  * Per-instrument costs, MEASURED from the live OANDA feed rather than guessed.
  *
- * Recorded during the London session on 12 Aug 2026, top of book:
- *   EUR_USD 0.00008 · GBP_USD 0.00013 · USD_JPY 0.016
- *   XAU_USD 0.74 · SPX500 0.50 · NAS100 3.0 · WTICO 0.040
+ * Two measurement rounds, both top of book:
+ *   12 Aug 2026, London session — EUR_USD 0.00008 · GBP_USD 0.00013 ·
+ *     USD_JPY 0.016 · XAU 0.74 · SPX500 0.50 · NAS100 3.0 · WTICO 0.040
+ *   13 Aug 2026 09:22 UTC — the instruments the first round left as guesses,
+ *     measured when Peter's traded universe was confirmed.
  *
- * ⚠️ These were guesses first, and two were badly wrong — XAU was assumed at
- * 0.35 against an actual 0.74, and NAS100 at 1.2 against an actual 3.0. Both
- * understatements flattered patterns on exactly the instruments that looked
- * most promising. Spreads also widen outside the London/NY overlap and around
- * releases, so these remain optimistic for anything traded at the edges of the
- * session.
+ * ⚠️ Guessing has now been wrong FOUR times, every time in the same direction.
+ * Round one: XAU assumed 0.35 against an actual 0.74, NAS100 assumed 1.2
+ * against 3.0. Round two, on the grouped `US30|DE30|DE40|UK100|JP225` bucket
+ * that had been sitting at a flat 2.4:
+ *
+ *   JP225   guessed 2.4 → measured 12.0   (5× understated)
+ *   US30    guessed 2.4 → measured  3.5
+ *   XAG     guessed 0.025 → measured 0.039
+ *   UK100   guessed 2.4 → measured  1.5   (the one over-statement)
+ *
+ * Every understatement flatters results, and JP225 at one fifth of its real
+ * spread would have made an unprofitable strategy look profitable. The round-one
+ * measured values all re-verified within 0.01 on the second round, so measured
+ * numbers hold up and guessed ones do not. Do not add an instrument here
+ * without measuring it.
+ *
+ * ⚠️ SINGLE SNAPSHOT, AND SESSION MATTERS. These were sampled at one instant
+ * during the London morning, before the US open and after the Tokyo cash close.
+ * Index CFD spreads vary by session far more than FX does, so JP225's 12.0 is
+ * an out-of-hours reading and is likely pessimistic during Tokyo hours. Before
+ * trusting any JP225 result, sample its spread across the sessions the strategy
+ * actually trades. Spreads also widen around releases everywhere.
  *
  * Slippage is assumed at roughly half the spread on stop exits, since a stop is
  * a market order and fills into whatever is there.
  */
 export function defaultCosts(instrument: string): Costs {
   if (/^XAU/.test(instrument)) return { spread: 0.74, slippage: 0.35 };
-  if (/^XAG/.test(instrument)) return { spread: 0.025, slippage: 0.012 };
+  if (/^XAG/.test(instrument)) return { spread: 0.039, slippage: 0.02 };
   if (/NAS100/.test(instrument)) return { spread: 3.0, slippage: 1.5 };
   if (/SPX500/.test(instrument)) return { spread: 0.5, slippage: 0.25 };
-  if (/US30|DE30|DE40|UK100|JP225/.test(instrument))
-    return { spread: 2.4, slippage: 1.2 };
+  if (/US30/.test(instrument)) return { spread: 3.5, slippage: 1.75 };
+  if (/UK100/.test(instrument)) return { spread: 1.5, slippage: 0.75 };
+  // Both the USD and JPY-denominated Nikkei quote a 12-point spread.
+  if (/JP225/.test(instrument)) return { spread: 12.0, slippage: 6.0 };
+  if (/DE30|DE40/.test(instrument)) return { spread: 2.2, slippage: 1.1 };
+  if (/US2000/.test(instrument)) return { spread: 0.4, slippage: 0.2 };
   if (/WTICO|BCO/.test(instrument)) return { spread: 0.04, slippage: 0.02 };
   if (/NATGAS/.test(instrument)) return { spread: 0.006, slippage: 0.003 };
   if (/_JPY$/.test(instrument)) return { spread: 0.016, slippage: 0.008 };

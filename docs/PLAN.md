@@ -425,6 +425,199 @@ Eight combinations remain positive out-of-sample. Scalp remains 0-for-10.
 
 ---
 
+## 8e. TradingView corpus & the English→pattern compiler *(added Aug 2026)*
+
+Three things Peter asked for: pull good indicators and strategies from TradingView into the
+project, backtest them and cull the bad ones, and be able to describe a strategy in plain English
+and have it built. The audit below changed the shape of all three, mostly by finding that we had
+already built more than expected.
+
+### What already exists (audited, not assumed)
+
+| Piece | Status |
+|---|---|
+| Indicator library | ✅ `src/lib/indicators/` — 14 indicators, Wilder-correct, NaN-padded, tested |
+| Strategy representation | ✅ `PatternDef` JSON DSL — *this is the constrained DSL, already built* |
+| Backtest engine | ✅ `src/lib/backtest/engine.ts` — next-bar entry, stop-wins ties, measured costs, IS/OOS split |
+| Shared evaluator | ✅ One `BarContext` drives scanner and backtester |
+| Pattern → English | ✅ `describe.ts` — `describeSeries/Condition/Trigger/Stop/Target` |
+| Candle history | ✅ `src/lib/candles/service.ts` + bulk store (#64) |
+
+So the backtester Peter asked for **is not a new build**. The gap is narrower and more specific:
+a source of candidate strategies, a way to translate them in, a statistical gate strong enough for
+the volume, and the English→`PatternDef` direction.
+
+### The MCP server — audited, approved for local use
+
+`daviddme/tradingview-indicator-search-mcp-server`, MIT, ~1,880 lines across 9 files.
+
+Audit findings:
+- **Network egress is two hosts only** — `www.tradingview.com` and `pine-facade.tradingview.com`.
+  No telemetry, no third host.
+- **No `child_process`, no `eval`, no `new Function`, no arbitrary filesystem writes.** The only
+  `exec` calls are `db.exec` on SQLite pragmas and schema.
+- **Two dependencies**, both mainstream: `@modelcontextprotocol/sdk`, `zod`.
+- `process.env` read only for the documented `IF_*` config variables.
+- Throttle is enforced at the HTTP layer, not per-tool, so no tool can bypass it. Circuit breaker
+  after 3 consecutive blocks; 2,000/day hard budget.
+- Its own `NOTICE.md` states plainly that harvested Pine remains its authors' copyright.
+
+**Verdict: safe to install locally.** Run on the residential connection, never from a host.
+
+### The corpus is a reference cache, not project data
+
+A hard boundary, because getting this wrong would corrupt the data model:
+
+```
+TradingView → SQLite corpus (gitignored, disposable, re-harvestable)
+                   ↓  supervised translation, human in the loop
+              PatternDef JSON  ←──── English→pattern compiler
+                   ↓
+              existing backtest engine
+                   ↓  walk-forward gate
+              curated library  →  manual promotion  →  autonomous engine
+```
+
+The corpus **never** enters Postgres, never joins `transactions_raw`, and is never a dependency of
+anything that renders. If it is deleted, we re-harvest and nothing is lost.
+
+Realistic volume: 1.5–4.5s jittered delay plus a 20–60s break every 25 requests, and
+`IF_HARVEST_MAX` caps a run at 200. Practical ceiling is **~500–1,500 scripts/day**. "Hundreds of
+thousands" is the size of the haystack, not of the take. Harvesting is targeted from the start.
+
+### ⚠️ Two hazards that decide whether this is worth doing
+
+**1. The multiple-testing problem gets an order of magnitude worse.**
+
+§8b flagged this at 20 patterns, and Peter chose plain backtesting over walk-forward; the engine's
+IS/OOS split was the compromise. **That compromise does not survive this change.** At 20 patterns a
+train/test split is a reasonable guard. At 300 harvested candidates, a single 30% holdout is not a
+guard at all — with 300 tries, several will clear any fixed OOS threshold on luck alone, and they
+will then carry the specific false authority of having "passed out-of-sample."
+
+Screening hundreds and keeping the best ten is *a procedure that manufactures false winners*. It
+would be worse than not building it, because the survivors reach an autonomous engine that can
+place real orders.
+
+So harvesting at volume requires, as a precondition, not an enhancement:
+- **Walk-forward** with multiple non-overlapping windows, replacing the single tail split
+- **An explicit tested-count**, recorded per screening run, with the pass threshold adjusted for it
+- **Consistency across windows** as the criterion, not aggregate performance
+
+Expected yield from a few hundred candidates: **a small handful, possibly none.** A screen that
+usually returns nothing is working. One that keeps finding winners is broken.
+
+**2. TradingView's population is adversely selected.**
+
+Public scripts skew heavily toward curve-fitted and — critically — **repainting** logic: lookahead
+via `security()`, signals that redraw on the closed bar. Many of the most popular strategies look
+superb on TradingView precisely because they are peeking.
+
+Our translation kills this by construction: `PatternDef` cannot express lookahead, entry is the next
+bar's open, and swings are confirmed-only. That is the right outcome, but it has a consequence worth
+stating — **a script's TradingView performance carries no information about its real quality**, so
+popularity and stars are discovery signals only, never evidence. The corpus is a source of *ideas*,
+not of *results*.
+
+### Translation is the bottleneck, and it is human-supervised
+
+Pine → `PatternDef` is not mechanical. Pine's bar-by-bar series model, `security()` semantics and
+`barstate` handling have no clean mapping. Anything the DSL cannot express is **rejected, not
+approximated** — a strategy silently simplified into the DSL is not the strategy that was tested.
+Each translation lands with its source URL and author credited in the header, per MPL-2.0 and the
+server's own NOTICE.
+
+### English → PatternDef
+
+`describe.ts` already renders `PatternDef` → English. This is the inverse, and the round trip is
+what makes it trustworthy: Peter describes a strategy, it compiles to `PatternDef`, and
+`describeTrigger` renders it **back** to English for confirmation before anything runs. If the
+read-back doesn't match his intent, the compile was wrong and he sees it immediately.
+
+Compiling to the DSL rather than generating code is what makes this safe: the output is
+type-checked, storable as JSON, incapable of expressing lookahead, and runs through the same
+evaluator as everything else. Same gate as any other pattern — no exemption for being Peter's idea.
+
+### Sequence
+
+1. Install + wire the MCP (audited above); corpus path gitignored
+2. **Walk-forward + tested-count in the engine** — precondition, before any bulk screening
+3. Targeted harvest; `query_corpus` to shortlist by source content
+4. Supervised Pine → `PatternDef` translation, each with a golden test
+5. Screen through the gate; retain rejects with results rather than deleting, so the same idea
+   isn't re-tested in six months
+6. English→`PatternDef` compiler with `describe.ts` read-back confirmation
+7. Promotion to live stays a manual act by Peter — never automatic on a passing backtest
+
+### Instruments and history — resolved, and verified live
+
+Peter's traded universe: **NAS100, UK100, US30, SPX500, JP225, XAU, XAG, FX** — plus **shares**.
+Minimum **5 years of H1**. Verified against the practice account on 13 Aug 2026:
+
+| Check | Result |
+|---|---|
+| Index/metal instruments available | ✅ all eight, as CFDs |
+| H1 history depth | ✅ all serve H1 from at least Jan 2019 — **7+ years**, comfortably past the 5 required |
+| Individual shares | ❌ **not available on OANDA** — 123 instruments, 68 currency / 34 CFD / 21 metal, zero equities |
+
+5 years of H1 ≈ **30,000 bars** per instrument, so 6 windows ≈ 10 months each. That is enough for
+`minWindowsWithTrades: 4` to be a meaningful bar rather than a formality.
+
+**Shares are a genuine gap, not an oversight.** OANDA cannot supply them, so equity backtesting
+needs a second data source — Polygon, Finnhub, TwelveData and AlphaVantage keys are all already in
+`.env.local`. That is a separate piece of work with its own cost model (commission and borrow, not
+spread), its own session handling, and its own corporate-action problem (splits and dividends must
+be adjusted or every long-run backtest is wrong). Deferred deliberately; the eight OANDA instruments
+come first because they need no new integration.
+
+### ⚠️ Costs re-measured — guessing has now been wrong four times
+
+The grouped `US30|DE30|DE40|UK100|JP225` bucket in `defaultCosts` was a flat **guess of 2.4**, never
+measured. Sampled live at 09:22 UTC on 13 Aug 2026:
+
+| Instrument | Guessed | Measured | |
+|---|---|---|---|
+| JP225 | 2.4 | **12.0** | ⚠️ 5× understated |
+| US30 | 2.4 | 3.5 | |
+| XAG | 0.025 | 0.039 | |
+| UK100 | 2.4 | 1.5 | the only over-statement |
+| DE30 | 2.4 | 2.2 | |
+| US2000 | — | 0.4 | newly added |
+
+Every round-one measured value (NAS100 3.0, SPX500 0.50, XAU 0.73 vs 0.74, EUR_USD, GBP_USD,
+USD_JPY, WTICO) **re-verified within 0.01**. Measured numbers hold; guessed ones do not.
+
+JP225 at one fifth of its real spread would have turned a losing strategy into a winning one on an
+instrument Peter actively trades. `defaultCosts` now carries per-instrument measured values and a
+standing instruction not to add an instrument without measuring it.
+
+**Caveat recorded in the code:** this is a single snapshot, taken in the London morning before the
+US open and after the Tokyo cash close. Index CFD spreads are far more session-dependent than FX, so
+JP225's 12.0 is an out-of-hours reading and is probably pessimistic during Tokyo hours. Sample
+across the traded sessions before trusting any JP225 result.
+
+### Built
+
+- `src/lib/backtest/gate.ts` + tests — segmentation, seeded bootstrap, BH multiplicity control,
+  `screen()` recording `testedCount`. 258 tests pass.
+- Naming corrected in the code: this is **contiguous out-of-sample segmentation**, not classic
+  walk-forward optimisation, because `PatternDef` parameters are fixed and nothing is fitted per
+  window. The overfitting risk lives in *choosing among many patterns*, which is what the
+  multiplicity control addresses.
+
+### Still to build
+
+1. **Bulk H1 backfill** — 8 instruments × ~30k bars, paginated (OANDA caps at 5,000/request),
+   into the existing `candles` table. Reuses the primary key, so re-running is idempotent.
+2. **Backtest as a project feature** — a page to run a pattern or a batch through the gate and read
+   per-window results, not just a test-suite capability.
+3. Harvest → supervised Pine translation → screening.
+4. English → `PatternDef` compiler with `describe.ts` read-back.
+
+Scalp remains 0-for-10 out-of-sample (§8d) and stays deprioritised on that evidence.
+
+---
+
 ## 9. Outstanding input
 
 **Peter's actual patterns.** He flagged from the outset that he has "a bunch of potential patterns
@@ -536,3 +729,15 @@ Every decision below was made by Peter across 14 AskUserQuestion rounds.
 | 63 | Backtester reports out-of-sample alongside full-period (multiple-testing guard) | build |
 | 64 | **Supersedes #59:** bulk historical candle store added for backtesting | build |
 | 65 | Patterns stored as JSON DSL — one definition drives scanner *and* backtester | build |
+| 66 | TradingView MCP server adopted for discovery — audited, MIT, local-only | 8e |
+| 67 | Corpus is a gitignored reference cache — never Postgres, never a render dependency | 8e |
+| 68 | **Supersedes #63:** walk-forward + tested-count required before bulk screening | 8e |
+| 69 | Pine → `PatternDef` translation is human-supervised; inexpressible strategies rejected, not approximated | 8e |
+| 70 | TradingView performance treated as discovery signal only, never as evidence | 8e |
+| 71 | Rejected candidates retained with results rather than deleted | 8e |
+| 72 | English compiles to `PatternDef`, with `describe.ts` read-back confirmation | 8e |
+| 73 | Promotion to live remains manual — never automatic on a passing backtest | 8e |
+| 74 | Universe: NAS100, UK100, US30, SPX500, JP225, XAU, XAG, FX — 5y H1 minimum (7y available) | 8e |
+| 75 | **Shares deferred** — OANDA carries no equities; needs a second data source and a different cost model | 8e |
+| 76 | **Supersedes the grouped index costs:** per-instrument measured spreads; JP225 was 5× understated | 8e |
+| 77 | No instrument added to `defaultCosts` without measuring its spread first | 8e |

@@ -80,4 +80,26 @@ export async function register() {
   } catch (e) {
     console.error("[stream] failed to start:", (e as Error).message);
   }
+
+  try {
+    await startEngine();
+  } catch (e) {
+    console.error("[engine] failed to start:", (e as Error).message);
+  }
+}
+
+/**
+ * Start the execution scheduler.
+ *
+ * Starting the timer is not the same as starting to trade: every book is
+ * created disarmed, and a tick with nothing armed returns after one query. The
+ * scheduler exists so that arming a book in the UI takes effect without a
+ * redeploy — arming remains the only thing that causes an order.
+ */
+async function startEngine(): Promise<void> {
+  const { ensureExecutionState } = await import("@/lib/execution/engine");
+  const { startScheduler } = await import("@/lib/execution/scheduler");
+
+  await ensureExecutionState();
+  startScheduler();
 }
