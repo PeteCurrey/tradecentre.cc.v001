@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { verifyPassword } from "@/lib/auth/password";
+import { passwordHashIsWellFormed, verifyPassword } from "@/lib/auth/password";
 import { createSession, sessionCookieOptions } from "@/lib/auth/session";
 import { isAuthConfigured } from "@/lib/env";
 
@@ -26,6 +26,27 @@ export async function POST(req: NextRequest) {
       {
         error:
           'Auth is not configured. Run: node scripts/hash-password.mjs "your password"',
+      },
+      { status: 503 },
+    );
+  }
+
+  /**
+   * A broken hash is a configuration fault, not a wrong password.
+   *
+   * Checked BEFORE the rate limiter, so a misconfigured deployment cannot lock
+   * itself out while showing a message that sends you looking for the wrong
+   * problem. Says what is wrong and how to fix it; reveals nothing about the
+   * stored value.
+   */
+  if (!passwordHashIsWellFormed()) {
+    return NextResponse.json(
+      {
+        error:
+          "AUTH_PASSWORD_HASH is malformed, so no password can succeed. If it is " +
+          "set in a .env file, escape the dollar signs (scrypt\\$16384\\$8\\$1\\$…) " +
+          "— quoting is not enough — then restart. Or regenerate it with: " +
+          'node scripts/hash-password.mjs "your password"',
       },
       { status: 503 },
     );
