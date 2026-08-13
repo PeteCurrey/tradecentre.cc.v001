@@ -367,6 +367,49 @@ export const stateLogs = pgTable("state_logs", {
   notes: text("notes"),
 });
 
+/**
+ * Goals.
+ *
+ * Every goal names a metric the app already computes from the ledger, so
+ * progress is measured rather than self-reported. That is the whole design
+ * constraint: a goal whose progress you type in yourself is a note, and notes
+ * belong in `daily_reviews`.
+ *
+ * `metric` is deliberately a small closed set for the same reason — an
+ * arbitrary free-text target could not be scored against anything.
+ */
+export const goalMetricEnum = pgEnum("goal_metric", [
+  "total_r", // cumulative R over the period
+  "expectancy_r", // mean R per trade
+  "win_rate", // percentage
+  "max_drawdown_r", // a CEILING, not a floor — lower is better
+  "profit_factor",
+  "trade_count", // useful as a ceiling when overtrading is the problem
+  "adherence_pct", // mean rule adherence from daily reviews
+]);
+
+export const goals = pgTable(
+  "goals",
+  {
+    id: serial("id").primaryKey(),
+    /** "2026-08" for a month, "2026-Q3" for a quarter, "2026" for a year. */
+    period: text("period").notNull(),
+    metric: goalMetricEnum("metric").notNull(),
+    target: numeric("target", { precision: 12, scale: 4 }).notNull(),
+    /**
+     * True when the goal is met by staying BELOW the target — drawdown and
+     * trade count. Without this the same comparison would score them backwards.
+     */
+    lowerIsBetter: boolean("lower_is_better").notNull().default(false),
+    /** Null means every live book. */
+    book: bookEnum("book"),
+    note: text("note"),
+    achievedAt: timestamp("achieved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("goal_period_idx").on(t.period)],
+);
+
 /* ==========================================================================
    MARKET DATA & CONTEXT
    ========================================================================== */
