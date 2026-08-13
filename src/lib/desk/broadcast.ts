@@ -140,6 +140,7 @@ async function buildPush(): Promise<DeskPush> {
         todayR: b.todayR,
         todayTrades: b.todayTrades,
         openRiskR: b.openRiskR,
+        openRiskUnbounded: b.openRiskUnbounded,
         dailyLimitR: b.dailyLimitR,
         positions,
         armState: (exec?.state ?? "disarmed") as LiveBook["armState"],

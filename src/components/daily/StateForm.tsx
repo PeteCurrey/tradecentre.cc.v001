@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { saveStateLog } from "@/lib/journal/daily";
 import { Card, CardHeader } from "@/components/ui/Card";
+import { TILT_MARKERS } from "@/lib/journal/taxonomy";
 import {
   ErrorNote,
   Field,
@@ -25,21 +26,6 @@ export type StateData = {
   tiltMarkers: string[];
   notes: string | null;
 };
-
-/**
- * Tilt markers, kept to six.
- *
- * A longer list gets skipped, and a skipped field is worse than no field —
- * it makes the record look complete while carrying nothing.
- */
-export const TILT_MARKERS = [
-  { id: "revenge_urge", label: "Revenge urge" },
-  { id: "frustration", label: "Frustration" },
-  { id: "boredom", label: "Boredom" },
-  { id: "overconfidence", label: "Overconfidence" },
-  { id: "fear_of_missing", label: "FOMO" },
-  { id: "fatigue", label: "Fatigue" },
-];
 
 export function StateForm({ state }: { state: StateData }) {
   const { save, pending, saved, error } = useSaver();

@@ -178,7 +178,7 @@ export function TagToggles({
   selected,
   onChange,
 }: {
-  options: Array<{ id: string; label: string }>;
+  options: ReadonlyArray<{ id: string; label: string }>;
   selected: string[];
   onChange: (next: string[]) => void;
 }) {

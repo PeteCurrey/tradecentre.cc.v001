@@ -605,16 +605,133 @@ across the traded sessions before trusting any JP225 result.
   window. The overfitting risk lives in *choosing among many patterns*, which is what the
   multiplicity control addresses.
 
+- `src/lib/candles/pagination.ts` + tests — cursor logic, kept free of `server-only` and the db
+  client so it is unit-testable. `src/lib/candles/backfill.ts` does the I/O.
+- **History backfilled: 10 instruments × 7.6 years of H1** (~450,000 bars), plus D, H4 and M15.
+
+### ⚠️ The resume bug, and why the trade-chart cache caused it
+
+The obvious resume rule — "start from the newest stored candle" — is wrong here, and it failed in
+the first real run. `service.ts` caches a few hundred candles around each *trade*, so an instrument
+can hold a recent window and nothing else. Resuming from the newest candle then starts the walk
+after that window and **silently skips every year before it**.
+
+Observed live: a 121-bar smoke test left EUR_USD holding one week of July 2026. The universe
+backfill then stored 633 bars for it and reported success, while every other instrument got 45,000.
+The backtest that followed would have run on 0.1 years of history and looked entirely normal.
+
+Fixed in `resolveResumeStart` (in `pagination.ts`, so it is testable): resume only when the *oldest*
+stored candle already reaches back to `from`; otherwise restart from `from` and let the primary key
+absorb the overlap. Redundant requests cannot lose history; a wrong cursor can. Re-run confirmed
+EUR_USD at 47,399 bars / 7.6y. A hole in the *middle* of stored history is still not detected —
+the coverage table flags those as "thin".
+
+### ⚠️ The library's timeframes do not match "5 years of H1"
+
+Peter asked for 5 years of H1. **No seed pattern is defined on H1** — the library is 5×M5, 5×M15,
+5×H4, 5×D. H1 is still worth having (harvested TradingView strategies are commonly H1), but the
+screen can only run a pattern on the granularity its trigger is defined on; running an M5 pattern
+against H1 bars silently evaluates a different strategy, so the UI refuses to.
+
+D, H4 and M15 are therefore backfilled too. **M5 is deliberately deferred**: 75 requests per
+instrument and ~3.75M rows, for the one horizon that is already 0-for-10 out-of-sample (§8d).
+Peter's call whether to spend it.
+
+Coverage sanity note: UK100 lands at ~80% of the FX-derived expectation with no gaps, because the
+LSE cash session is shorter. The "thin" threshold accounts for this rather than crying wolf.
+
+### ⚠️ The 500 MB volume, and the bug it exposed
+
+The M15 backfill filled the Postgres volume and **the database stopped accepting writes** — an
+outage, caused by loading 1.35M candle rows without ever checking the volume's capacity. Peter
+raised it to 500 MB; nothing was deleted, so the H1/H4/D history survived.
+
+The failure then surfaced a second, subtler bug. `getHistory` used `ORDER BY time`, but the planner
+reads an instrument/granularity range with a *bitmap* index scan, which does not preserve order, so
+it appends a Sort node. Sorting ~180k rows spills to a temp file, and on a tight volume that fails:
+`could not write to file "base/pgsql_tmp/…"`. A backtest that had all of its data still could not
+read it. `ANALYZE` did not change the plan — the fix was to drop the SQL `ORDER BY` and sort in
+Node, which costs nothing because every row is materialised into an array regardless.
+
+**Storage budget at 500 MB.** Currently 224 MB. The practical ceiling is ~350 MB, because the volume
+also holds WAL and temp files — bulk inserts spike both. Completing M15 for the remaining
+instruments would be +140 MB and is *not* worth the risk; M5 (+590 MB) is off the table entirely.
+Supabase Pro (8 GB, already paid for) is the right destination, but the migration is its own piece
+of work: check whether the app is co-hosted on Railway first, and note that Supabase's
+transaction-mode pooler needs `prepare: false` for `postgres.js`.
+
+### Screening results — 120 candidates, nothing passed
+
+| Run | Candidates | Passed |
+|---|---|---|
+| D + H4 × 10 instruments | 100 | **0** |
+| M15 × 4 complete indices | 20 | **0** |
+
+The D/H4 run produced tempting-looking leaders — `swing-bos-retest` on XAU at +34.6R over 263
+trades, positive in 5 of 6 windows, p=0.007 — rejected at q=0.138 because p=0.007 is roughly what
+the *best of 100* tries yields under the null. Screened alone it would have passed, which is the
+entire argument for the multiplicity control.
+
+The M15 run is blunter: **18 of 20 are outright negative**, several catastrophically
+(`intraday-pdh-sweep-fade` on NAS100: 2,228 trades, −344R). The shape is unmistakable — high trade
+counts multiplied by a small negative average R. That is cost drag, and it corroborates §8d's
+finding that spread was ~76% of Peter's net loss. Frequent intraday patterns on index CFDs bleed
+out on spread before edge gets a say.
+
+Reading this honestly: the seed library is not a source of edges, which is exactly what §8b said it
+was for. The screen is doing its job by saying so.
+
+JP225 M15 is excluded from screens — its history stops at 2022-04-08 where the disk filled, so
+screening it beside instruments holding 2019–2026 would compare regimes and call it a comparison.
+Its ~76k orphan rows are harmless while nothing selects them.
+
+### 📋 Pre-registered test: `swing-bos-retest` on XAU_USD H4
+
+**Written before the data was fetched.** That is the entire point — a threshold chosen after seeing
+the result is not a threshold.
+
+*Why this one:* it led the 100-candidate D/H4 screen (+34.6R over 263 trades, 5/6 windows positive,
+p=0.007) but was rejected at q=0.138, because p=0.007 is about what the best of 100 tries returns
+under the null. Rejection there means "not distinguishable from luck **given how it was found**" —
+not "does not work". The way to settle it is one hypothesis, stated in advance, on data that played
+no part in selecting it.
+
+| | |
+|---|---|
+| **Hypothesis** | Long `swing-bos-retest` on XAU_USD H4 has positive expectancy net of measured costs |
+| **Data** | XAU_USD H4, **2006-03-19 → 2018-12-31** — never used in any screen |
+| **N tested** | **1.** No multiplicity adjustment applies, so q = p. This is what pre-registration buys |
+| **Costs** | Measured XAU spread 0.74 / slippage 0.35, unchanged |
+
+**Pass criteria, all four required:**
+1. ≥ 30 trades
+2. Total R > 0
+3. Consistency ≥ 0.66 across 6 windows
+4. One-sided bootstrap p < 0.05
+
+**Prediction from the 2019–2026 sample:** ~0.132 avg R, ~39% win rate, ~35 trades/year (so ~450
+trades over 12.8 years). Regression toward zero is *expected* — this was a selected winner. A result
+around 0.05–0.10 avg R would be consistent with a real but smaller edge; near 0.00 or negative means
+the original number was selection.
+
+**Caveat recorded in advance:** 2006–2018 spans the GFC, the 2011 peak, the 2013 crash and the
+2015–2018 range. That is a strong robustness test, but a failure could be regime-specific rather
+than proof of no edge. Also, OANDA's spread today is not 2008's — costs are held at today's
+measured values, which is optimistic for the early years.
+
 ### Still to build
 
-1. **Bulk H1 backfill** — 8 instruments × ~30k bars, paginated (OANDA caps at 5,000/request),
-   into the existing `candles` table. Reuses the primary key, so re-running is idempotent.
-2. **Backtest as a project feature** — a page to run a pattern or a batch through the gate and read
-   per-window results, not just a test-suite capability.
-3. Harvest → supervised Pine translation → screening.
-4. English → `PatternDef` compiler with `describe.ts` read-back.
+1. Harvest → supervised Pine translation → screening.
+2. English → `PatternDef` compiler with `describe.ts` read-back.
+3. Supabase migration, as its own piece of work, before any further backfill.
 
-Scalp remains 0-for-10 out-of-sample (§8d) and stays deprioritised on that evidence.
+**Sequencing decision:** harvest first, Supabase second. The corpus is local SQLite and translated
+patterns are a few KB of JSON, so harvesting needs no Postgres headroom — it screens against the
+D/H4/H1 history already stored, which is the granularity most published strategies use. Supabase
+becomes urgent only when M5 or a wider universe is wanted.
+
+Scalp remains 0-for-10 out-of-sample (§8d), intraday is now 0-for-20, and M5 stays unmeasured —
+deliberately, since it is the most expensive horizon to store and the least supported by evidence.
 
 ---
 
@@ -741,3 +858,9 @@ Every decision below was made by Peter across 14 AskUserQuestion rounds.
 | 75 | **Shares deferred** — OANDA carries no equities; needs a second data source and a different cost model | 8e |
 | 76 | **Supersedes the grouped index costs:** per-instrument measured spreads; JP225 was 5× understated | 8e |
 | 77 | No instrument added to `defaultCosts` without measuring its spread first | 8e |
+| 78 | Backfill resumes only when stored history reaches back to `from` — the trade-chart cache makes newest-candle resume unsafe | 8e |
+| 79 | H1 + D + H4 + M15 backfilled; **M5 deferred** (75 req/instrument, 3.75M rows, 0-for-10 horizon) | 8e |
+| 80 | A pattern is only screened on the granularity its trigger declares | 8e |
+| 81 | `getHistory` sorts in Node, not SQL — the planner's bitmap scan forces a Sort that spills to temp files | 8e |
+| 82 | Storage ceiling ~350 MB of the 500 MB volume; no further backfill until Supabase | 8e |
+| 83 | JP225 M15 excluded from screens — truncated at 2022-04-08, different regime to the rest | 8e |

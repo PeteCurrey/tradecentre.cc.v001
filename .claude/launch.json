@@ -1,10 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "desk",
-      "url": "http://localhost:3111",
-      "port": 3111
-    }
+    { "name": "desk", "url": "http://localhost:3210", "port": 3210 }
   ]
 }

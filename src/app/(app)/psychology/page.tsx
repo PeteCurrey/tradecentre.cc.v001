@@ -8,7 +8,8 @@ import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import { BarRows } from "@/components/charts/Plot";
-import { StateForm, TILT_MARKERS, type StateData } from "@/components/daily/StateForm";
+import { StateForm, type StateData } from "@/components/daily/StateForm";
+import { TILT_MARKERS, tiltLabel } from "@/lib/journal/taxonomy";
 import { DISPLAY_TZ, dayKey } from "@/lib/time";
 import { clsx } from "@/lib/clsx";
 
@@ -251,7 +252,7 @@ export default async function PsychologyPage() {
                       <td className="figure py-2 text-right">{l.focus ?? "—"}</td>
                       <td className="py-2 text-[11px] text-[var(--color-warn)]">
                         {l.tiltMarkers
-                          .map((m) => TILT_MARKERS.find((t) => t.id === m)?.label ?? m)
+                          .map(tiltLabel)
                           .join(", ")}
                       </td>
                       <td className="figure py-2 text-right text-[var(--color-ink-dim)]">

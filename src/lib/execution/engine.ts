@@ -16,6 +16,7 @@ import { nextAction, type ManagedPosition, type ManagementRules } from "./manage
 import { BOOK_IDS, type BookId } from "@/lib/books";
 import { BarContext } from "@/lib/patterns/evaluate";
 import { announce, evaluateClauses, ScanCollector } from "./telemetry";
+import { resolveStop, resolveTarget } from "./levels";
 import type { Condition, ManagementRule, StopRule, TargetRule } from "@/lib/patterns/dsl";
 import type { Bar } from "@/lib/indicators";
 import { DISPLAY_TZ, partsIn } from "@/lib/time";
@@ -480,78 +481,6 @@ function sizeOrder(o: {
   const riskAmount = o.equity * (o.baseRiskPct / 100);
   const magnitude = Math.floor(riskAmount / distance);
   return o.direction === "long" ? magnitude : -magnitude;
-}
-
-function resolveStop(
-  rule: StopRule | undefined,
-  ctx: BarContext,
-  i: number,
-  entry: number,
-  direction: "long" | "short",
-): number | null {
-  if (!rule) return null;
-  const atr = ctx.series({ s: "atr", period: 14 })[i];
-
-  if (rule.kind === "atr") {
-    if (!Number.isFinite(atr)) return null;
-    return direction === "long" ? entry - rule.multiple * atr : entry + rule.multiple * atr;
-  }
-
-  const base = ctx.series(rule.at)[i];
-  if (!Number.isFinite(base)) return null;
-  const buffer = (rule.bufferAtr ?? 0) * (Number.isFinite(atr) ? atr : 0);
-  const stop = direction === "long" ? base - buffer : base + buffer;
-
-  // A stop on the wrong side of entry is refused here as well as by the guard,
-  // so a bad pattern definition produces no order rather than a log full of
-  // rejections.
-  if (direction === "long" && stop >= entry) return null;
-  if (direction === "short" && stop <= entry) return null;
-  return stop;
-}
-
-/**
- * Resolve the pattern's first target into a take-profit price.
- *
- * Only the FIRST target is attached to the order. Later targets are what the
- * management rules scale out into, and attaching them all would close the whole
- * position at the nearest one — the opposite of the intent.
- *
- * `timeStop` deliberately yields no price: "exit after N bars" is not a level,
- * and inventing one to satisfy the order payload would attach a take-profit the
- * pattern never asked for. Those patterns run stop-only and exit through the
- * management rules, which is what a time stop means.
- *
- * A target on the wrong side of entry is refused rather than sent. OANDA would
- * reject it anyway, but rejecting here means the order still goes out with its
- * stop attached instead of failing wholesale over the optional half.
- */
-function resolveTarget(
-  rule: TargetRule | undefined,
-  ctx: BarContext,
-  i: number,
-  entry: number,
-  stopPrice: number,
-  direction: "long" | "short",
-): number | null {
-  if (!rule) return null;
-
-  let target: number;
-  if (rule.kind === "rMultiple") {
-    const risk = Math.abs(entry - stopPrice);
-    if (!(risk > 0)) return null;
-    target = direction === "long" ? entry + rule.r * risk : entry - rule.r * risk;
-  } else if (rule.kind === "series") {
-    const value = ctx.series(rule.at)[i];
-    if (!Number.isFinite(value)) return null;
-    target = value;
-  } else {
-    return null;
-  }
-
-  if (direction === "long" && target <= entry) return null;
-  if (direction === "short" && target >= entry) return null;
-  return target;
 }
 
 async function fetchBars(

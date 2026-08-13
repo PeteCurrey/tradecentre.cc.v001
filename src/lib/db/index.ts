@@ -28,8 +28,24 @@ import * as schema from "./schema";
  *   Retained because Supabase remains a valid target for this app.
  */
 
+/**
+ * The connection is cached across hot reloads, KEYED ON THE URL.
+ *
+ * The key is the point. Without it, changing DATABASE_URL and letting the dev
+ * server reload env leaves the cached client pointing at the previous database
+ * — and it keeps answering. That happened: the URL moved from Supabase to
+ * Railway, the running server never noticed, and six screens 500'd on tables
+ * that existed in the configured database but not the connected one. The
+ * failure looked like missing migrations, which is the wrong thing to go and
+ * fix.
+ *
+ * Silently reading a different database than the one configured is a bad
+ * failure anywhere and a dangerous one in a trading journal, so a changed URL
+ * now closes the old pool and opens a new one.
+ */
 const globalForDb = globalThis as unknown as {
   __sql?: ReturnType<typeof postgres>;
+  __sqlUrl?: string;
 };
 
 function isTransactionPooler(url: string): boolean {
@@ -62,8 +78,19 @@ function needsTls(url: string): boolean {
 }
 
 function client() {
+  const url = env().DATABASE_URL;
+
+  if (globalForDb.__sql && globalForDb.__sqlUrl !== url) {
+    const stale = globalForDb.__sql;
+    globalForDb.__sql = undefined;
+    // Close in the background: a slow or already-dead socket must not block the
+    // request that noticed the change.
+    void stale.end({ timeout: 5 }).catch(() => {});
+    console.warn("[db] DATABASE_URL changed — reconnecting to the new database");
+  }
+
   if (!globalForDb.__sql) {
-    const url = env().DATABASE_URL;
+    globalForDb.__sqlUrl = url;
     globalForDb.__sql = postgres(url, {
       max: 10,
       idle_timeout: 20,

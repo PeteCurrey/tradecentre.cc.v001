@@ -86,6 +86,13 @@ export async function register() {
   } catch (e) {
     console.error("[engine] failed to start:", (e as Error).message);
   }
+
+  try {
+    const { startDeskBroadcast } = await import("@/lib/desk/broadcast");
+    startDeskBroadcast();
+  } catch (e) {
+    console.error("[desk] failed to start broadcast:", (e as Error).message);
+  }
 }
 
 /**

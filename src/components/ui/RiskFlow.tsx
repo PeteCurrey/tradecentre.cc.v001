@@ -1,3 +1,6 @@
+"use client";
+
+import { useAnimatedValue } from "@/lib/stream/useAnimatedValue";
 import { BOOK_LIST } from "@/lib/books";
 import { clsx } from "@/lib/clsx";
 
@@ -8,6 +11,16 @@ export type BookRisk = {
   /** Open risk in R currently committed in this book. */
   riskR: number;
   positions: number;
+  /**
+   * Positions in this book whose risk cannot be computed — no stop, or no
+   * recorded opening stop. NOT included in riskR, because there is no honest
+   * number to include: the loss is unbounded.
+   */
+  unbounded?: number;
+  /** Live unrealised P&L for this book, in account currency. */
+  unrealizedPl?: number;
+  /** True when the engine is armed on this book. */
+  armed?: boolean;
 };
 
 const ROW_H = 46;
@@ -28,13 +41,34 @@ const SVG_W = 210;
 export function RiskFlow({ books, className }: { books: BookRisk[]; className?: string }) {
   const height = books.length * ROW_H;
   const total = books.reduce((s, b) => s + b.riskR, 0);
+  /**
+   * Ribbons drawn from computable risk alone would sit grey and flat while ten
+   * unstopped positions were open — the exact opposite of the truth. The
+   * source block says so instead of showing a confident 0.00R.
+   */
+  const unbounded = books.reduce((s, b) => s + (b.unbounded ?? 0), 0);
+
+  /**
+   * Eased so a position opening or a stop moving to breakeven is a visible
+   * thickening or thinning rather than a jump cut. The value is small and
+   * bounded, so one shared spring keeps the four ribbons in sympathy.
+   */
+  const shownTotal = useAnimatedValue(total);
 
   const rows = books.map((b, i) => {
     const y = i * ROW_H + ROW_H / 2;
     const share = total > 0 ? b.riskR / total : 0;
     // Thickness spans 3–26px by share of total open risk.
     const thickness = total > 0 ? 3 + share * 23 : 3;
-    return { ...b, y, thickness, live: b.riskR > 0 };
+
+    /**
+     * Flow speed from committed risk: more at stake visibly moves harder.
+     * Clamped at both ends — below 0.6s it reads as a strobe, above 3s it
+     * looks stalled, and neither says anything useful about the position.
+     */
+    const flowSeconds = b.riskR > 0 ? Math.max(0.6, Math.min(3, 2.4 - b.riskR * 1.2)) : 0;
+
+    return { ...b, y, thickness, live: b.riskR > 0, flowSeconds };
   });
 
   return (
@@ -44,21 +78,41 @@ export function RiskFlow({ books, className }: { books: BookRisk[]; className?: 
         <div
           className={clsx(
             "rounded-[var(--radius-tile)] border px-3.5 py-3",
-            total > 0
-              ? "border-[var(--color-accent-line)] bg-[var(--color-accent-wash)]"
-              : "border-[var(--color-line)] bg-[var(--color-sunken)]",
+            unbounded > 0
+              ? "border-[var(--color-warn)]/50 bg-[var(--color-warn-wash)]"
+              : total > 0
+                ? "border-[var(--color-accent-line)] bg-[var(--color-accent-wash)]"
+                : "border-[var(--color-line)] bg-[var(--color-sunken)]",
           )}
         >
           <div className="label-faint whitespace-nowrap">Open risk</div>
-          <div
-            className="figure mt-1 text-2xl leading-none"
-            style={{
-              color: total > 0 ? "var(--color-accent)" : "var(--color-ink-faint)",
-            }}
-          >
-            {total.toFixed(2)}
-            <span className="text-sm">R</span>
-          </div>
+          {unbounded > 0 && total === 0 ? (
+            <>
+              <div className="figure mt-1 text-lg leading-none text-[var(--color-warn)]">
+                unbounded
+              </div>
+              <div className="mt-1 text-[10px] leading-tight text-[var(--color-warn)]">
+                {unbounded} unstopped
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                className="figure mt-1 text-2xl leading-none"
+                style={{
+                  color: total > 0 ? "var(--color-accent)" : "var(--color-ink-faint)",
+                }}
+              >
+                {shownTotal.toFixed(2)}
+                <span className="text-sm">R</span>
+              </div>
+              {unbounded > 0 && (
+                <div className="mt-1 text-[10px] leading-tight text-[var(--color-warn)]">
+                  +{unbounded} unstopped, not counted
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -85,17 +139,37 @@ export function RiskFlow({ books, className }: { books: BookRisk[]; className?: 
           ))}
         </defs>
 
-        {rows.map((r) => (
-          <path
-            key={r.bookId}
-            d={`M 0 ${height / 2} C ${SVG_W * 0.5} ${height / 2}, ${SVG_W * 0.5} ${r.y}, ${SVG_W} ${r.y}`}
-            fill="none"
-            stroke={`url(#flow-${r.bookId})`}
-            strokeWidth={r.thickness}
-            strokeLinecap="round"
-            opacity={r.live ? 1 : 0.5}
-          />
-        ))}
+        {rows.map((r) => {
+          const d = `M 0 ${height / 2} C ${SVG_W * 0.5} ${height / 2}, ${SVG_W * 0.5} ${r.y}, ${SVG_W} ${r.y}`;
+          return (
+            <g key={r.bookId}>
+              {/* The ribbon itself */}
+              <path
+                d={d}
+                fill="none"
+                stroke={`url(#flow-${r.bookId})`}
+                strokeWidth={r.thickness}
+                strokeLinecap="round"
+                opacity={r.live ? 1 : 0.5}
+                style={{ transition: "stroke-width 400ms var(--ease-out-quint)" }}
+              />
+              {/* Dashes travelling toward the book, drawn only where risk is
+                  actually committed. An empty ribbon stays still — motion here
+                  means "capital is riding on this", not "the app is running". */}
+              {r.live && (
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={r.colorVar}
+                  strokeWidth={Math.max(1, r.thickness * 0.35)}
+                  strokeLinecap="round"
+                  className="ribbon-flow"
+                  style={{ animationDuration: `${r.flowSeconds}s`, opacity: 0.9 }}
+                />
+              )}
+            </g>
+          );
+        })}
       </svg>
 
       {/* Destinations — the reference's port list */}
@@ -116,16 +190,43 @@ export function RiskFlow({ books, className }: { books: BookRisk[]; className?: 
             <span className="min-w-0 flex-1">
               <span
                 className={clsx(
-                  "block truncate text-[13px] font-medium",
+                  "flex items-center gap-1.5 truncate text-[13px] font-medium",
                   r.live ? "text-[var(--color-ink)]" : "text-[var(--color-ink-mute)]",
                 )}
               >
                 {r.label}
+                {/* Armed but flat still deserves a mark: the book is watching
+                    even though it has nothing on. */}
+                {r.armed && !r.live && (
+                  <span
+                    className="size-1 rounded-full bg-[var(--color-accent)]"
+                    title="Armed, no position"
+                  />
+                )}
               </span>
               <span className="block text-[11px] text-[var(--color-ink-faint)]">
                 {r.positions} {r.positions === 1 ? "position" : "positions"}
               </span>
             </span>
+
+            {/* Live P&L for the book. Green/red here is money, as the rule
+                requires — this is the one place on the ribbon list where those
+                colours are permitted. */}
+            {r.unrealizedPl !== undefined && r.live && (
+              <span
+                className={clsx(
+                  "figure shrink-0 text-[11px]",
+                  r.unrealizedPl > 0
+                    ? "money-up"
+                    : r.unrealizedPl < 0
+                      ? "money-down"
+                      : "money-flat",
+                )}
+              >
+                {r.unrealizedPl > 0 ? "+" : ""}
+                {r.unrealizedPl.toFixed(2)}
+              </span>
+            )}
             <span
               className={clsx(
                 "figure shrink-0 text-sm",

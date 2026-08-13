@@ -1,3 +1,6 @@
+"use client";
+
+import { useAnimatedValue } from "@/lib/stream/useAnimatedValue";
 import { clsx } from "@/lib/clsx";
 
 /**
@@ -36,6 +39,7 @@ export function RadialGauge({
   size = 260,
   label = "Today",
   sublabel,
+  live = false,
   className,
 }: {
   /** Today's R. Positive is profit. */
@@ -45,6 +49,8 @@ export function RadialGauge({
   size?: number;
   label?: string;
   sublabel?: string;
+  /** True when open positions are moving this figure in real time. */
+  live?: boolean;
   className?: string;
 }) {
   const cx = size / 2;
@@ -52,8 +58,18 @@ export function RadialGauge({
   const r = size / 2 - 22;
   const stroke = 14;
 
+  /**
+   * The needle eases; the printed number does not.
+   *
+   * Deliberately different treatments. Smoothing the arc makes movement
+   * readable, but smoothing the digits would put a figure on screen that was
+   * never true — and this particular figure is the one the daily limit is
+   * judged against. So the geometry is animated and the value is not.
+   */
+  const shown = useAnimatedValue(value);
+
   const safeLimit = limit > 0 ? limit : 1;
-  const clamped = Math.max(-safeLimit, Math.min(safeLimit, value));
+  const clamped = Math.max(-safeLimit, Math.min(safeLimit, shown));
   const t = clamped / safeLimit; // −1 … 1
   const angle = t * SWEEP_DEG;
 
@@ -62,6 +78,9 @@ export function RadialGauge({
 
   // At or beyond the limit the gauge reads as breached, not merely "very red".
   const breached = value <= -safeLimit;
+
+  /** Where the needle sits, for the tip marker and the glow. */
+  const tip = polar(cx, cy, r, angle);
 
   const ticks = Array.from({ length: 25 }, (_, i) => -SWEEP_DEG + (i * (SWEEP_DEG * 2)) / 24);
 
@@ -96,7 +115,9 @@ export function RadialGauge({
           );
         })}
 
-        {/* Filled arc, from centre outward in whichever direction */}
+        {/* Filled arc, from centre outward in whichever direction.
+            No CSS transition on `d`: the path is already re-rendered each frame
+            by the eased value, and a transition on top would fight it. */}
         {Math.abs(t) > 0.001 && (
           <path
             d={arcPath(cx, cy, r, 0, angle)}
@@ -104,11 +125,27 @@ export function RadialGauge({
             stroke={tone}
             strokeWidth={stroke}
             strokeLinecap="round"
-            style={{
-              filter: `drop-shadow(0 0 12px ${tone}66)`,
-              transition: "d 600ms var(--ease-out-quint)",
-            }}
+            style={{ filter: `drop-shadow(0 0 12px ${tone}66)` }}
           />
+        )}
+
+        {/* Needle tip. Present only while something is actually moving the
+            figure — a pulsing tip on a static gauge would be claiming activity
+            that isn't happening. */}
+        {live && Math.abs(t) > 0.001 && (
+          <>
+            <circle
+              cx={tip.x}
+              cy={tip.y}
+              r={stroke / 2 + 3}
+              fill="none"
+              stroke={tone}
+              strokeWidth={1.5}
+              className="pulse-ring"
+              style={{ transformOrigin: `${tip.x}px ${tip.y}px` }}
+            />
+            <circle cx={tip.x} cy={tip.y} r={3} fill={tone} />
+          </>
         )}
 
         {/* Zero marker */}

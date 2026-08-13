@@ -1,10 +1,22 @@
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
-import { trades as tradesTable, accounts as accountsTable } from "@/lib/db/schema";
-import { Card, CardHeader, StatTile } from "@/components/ui/Card";
+import {
+  trades as tradesTable,
+  accounts as accountsTable,
+  orderLog,
+  patterns as patternsTable,
+  tradeAnnotations,
+} from "@/lib/db/schema";
+import {
+  TradeRow,
+  type TradeNote,
+  type TradeOrigin,
+  type TradeRowData,
+} from "@/components/trades/TradeRow";
+import { Card, StatTile } from "@/components/ui/Card";
 import { Money, RMultiple } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/Page";
 import {
@@ -15,7 +27,6 @@ import {
   type BookId,
   type HorizonId,
 } from "@/lib/books";
-import { formatDateTime } from "@/lib/time";
 import { clsx } from "@/lib/clsx";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +62,83 @@ export default async function TradeLogPage({
 
   const accounts = await db.select().from(accountsTable);
   const currency = accounts[0]?.currency ?? "GBP";
+
+  /**
+   * Why each trade was taken.
+   *
+   * Both sources key on the BROKER's trade id rather than the derived row id,
+   * exactly as `trade_annotations` does — so wiping and rebuilding `trades`
+   * cannot orphan either the engine's record or Peter's notes.
+   */
+  const brokerIds = rows.map((r) => r.oandaTradeId);
+
+  const originRows = brokerIds.length
+    ? await db
+        .select({
+          oandaTradeId: orderLog.oandaTradeId,
+          reason: orderLog.reason,
+          requestedStop: orderLog.requestedStop,
+          requestedTarget: orderLog.requestedTarget,
+          outcome: orderLog.outcome,
+          createdAt: orderLog.createdAt,
+          patternName: patternsTable.name,
+          patternSlug: patternsTable.slug,
+          patternSummary: patternsTable.summary,
+        })
+        .from(orderLog)
+        .leftJoin(patternsTable, eq(orderLog.patternId, patternsTable.id))
+        .where(inArray(orderLog.oandaTradeId, brokerIds))
+        .orderBy(desc(orderLog.createdAt))
+    : [];
+
+  const noteRows = brokerIds.length
+    ? await db
+        .select({
+          oandaTradeId: tradeAnnotations.oandaTradeId,
+          reasoning: tradeAnnotations.reasoning,
+          notes: tradeAnnotations.notes,
+          conviction: tradeAnnotations.conviction,
+          patternName: patternsTable.name,
+        })
+        .from(tradeAnnotations)
+        .leftJoin(patternsTable, eq(tradeAnnotations.patternId, patternsTable.id))
+        .where(inArray(tradeAnnotations.oandaTradeId, brokerIds))
+    : [];
+
+  /**
+   * The ENTRY decision, not the latest one.
+   *
+   * A managed position accumulates further order-log rows as its stop is moved,
+   * and those carry reasons like "trailing to 1.5R" — true, but not why the
+   * trade was taken. Sorted newest-first above, so taking the LAST match per id
+   * lands on the oldest entry: the decision that opened it.
+   */
+  const originByTrade = new Map<string, TradeOrigin>();
+  for (const o of originRows) {
+    if (!o.oandaTradeId) continue;
+    originByTrade.set(o.oandaTradeId, {
+      patternName: o.patternName,
+      patternSlug: o.patternSlug,
+      patternSummary: o.patternSummary,
+      reason: o.reason,
+      requestedStop: o.requestedStop !== null ? Number(o.requestedStop) : null,
+      requestedTarget: o.requestedTarget !== null ? Number(o.requestedTarget) : null,
+      outcome: o.outcome,
+      decidedAt: o.createdAt.toISOString(),
+    });
+  }
+
+  const noteByTrade = new Map<string, TradeNote>(
+    noteRows.map((n) => [
+      n.oandaTradeId,
+      {
+        reasoning: n.reasoning,
+        notes: n.notes,
+        conviction: n.conviction,
+        patternName: n.patternName,
+      },
+    ]),
+  );
 
   // Stats over the returned set. Closed trades only — an open trade has no
   // realised result, and counting it as zero would drag every average down.
@@ -234,92 +322,38 @@ export default async function TradeLogPage({
                 </thead>
                 <tbody>
                   {rows.map((t) => {
-                    const bookDef = BOOKS[t.book as BookId];
+                    const data: TradeRowData = {
+                      id: t.id,
+                      oandaTradeId: t.oandaTradeId,
+                      book: t.book,
+                      horizon: t.horizon,
+                      instrument: t.instrument,
+                      direction: t.direction as "long" | "short",
+                      state: t.state,
+                      units: Number(t.units),
+                      entryTime: t.entryTime.toISOString(),
+                      entryPrice: Number(t.entryPrice),
+                      exitTime: t.exitTime ? t.exitTime.toISOString() : null,
+                      exitPrice: num(t.exitPrice),
+                      plannedStop: num(t.plannedStop),
+                      plannedTarget: num(t.plannedTarget),
+                      realizedPl: num(t.realizedPl),
+                      rMultiple: t.rMultiple,
+                      maeR: t.maeR,
+                      mfeR: t.mfeR,
+                      spreadCost: Number(t.spreadCost),
+                      financing: Number(t.financing),
+                      commission: Number(t.commission),
+                    };
                     return (
-                      <tr
+                      <TradeRow
                         key={t.id}
-                        className="border-b border-[var(--color-line)]/60 transition-colors last:border-0 hover:bg-[var(--color-card-raised)]"
-                      >
-                        <Td className="whitespace-nowrap text-[var(--color-ink-dim)]">
-                          <Link href={`/trades/${t.id}`} className="hover:text-[var(--color-accent)]">
-                            {formatDateTime(t.entryTime)}
-                          </Link>
-                        </Td>
-                        <Td className="font-medium">
-                          <Link href={`/trades/${t.id}`} className="hover:text-[var(--color-accent)]">
-                            {t.instrument}
-                          </Link>
-                        </Td>
-                        <Td>
-                          <span className="inline-flex items-center gap-1.5">
-                            <span
-                              className="size-1.5 rounded-full"
-                              style={{ background: bookDef?.colorVar }}
-                            />
-                            <span className="text-[var(--color-ink-dim)]">
-                              {bookDef?.label ?? t.book}
-                            </span>
-                          </span>
-                        </Td>
-                        <Td>
-                          {t.horizon ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <span
-                                className="size-1.5 rounded-full"
-                                style={{
-                                  background: HORIZONS[t.horizon as HorizonId].colorVar,
-                                }}
-                              />
-                              <span className="text-[var(--color-ink-mute)]">
-                                {HORIZONS[t.horizon as HorizonId].label}
-                              </span>
-                            </span>
-                          ) : (
-                            <span className="text-[var(--color-ink-faint)]">open</span>
-                          )}
-                        </Td>
-                        <Td align="right">
-                          <span
-                            className={clsx(
-                              "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
-                              t.direction === "long"
-                                ? "bg-[var(--color-accent-wash)] text-[var(--color-accent)]"
-                                : "bg-[var(--color-line)] text-[var(--color-ink-dim)]",
-                            )}
-                          >
-                            {t.direction}
-                          </span>
-                        </Td>
-                        <Td align="right" className="figure text-[var(--color-ink-dim)]">
-                          {Number(t.units).toLocaleString()}
-                        </Td>
-                        <Td align="right" className="figure">
-                          {Number(t.entryPrice).toFixed(5)}
-                        </Td>
-                        <Td align="right" className="figure text-[var(--color-ink-dim)]">
-                          {t.exitPrice ? Number(t.exitPrice).toFixed(5) : "—"}
-                        </Td>
-                        <Td align="right" className="figure text-[var(--color-ink-mute)]">
-                          {t.plannedStop ? Number(t.plannedStop).toFixed(5) : "—"}
-                        </Td>
-                        <Td align="right">
-                          {t.rMultiple !== null ? (
-                            <RMultiple value={t.rMultiple} />
-                          ) : (
-                            <span className="text-[var(--color-ink-faint)]">—</span>
-                          )}
-                        </Td>
-                        <Td align="right">
-                          {num(t.realizedPl) !== null ? (
-                            <Money value={Number(t.realizedPl)} currency={currency} />
-                          ) : (
-                            "—"
-                          )}
-                        </Td>
-                        <Td align="right" className="figure text-[var(--color-ink-mute)]">
-                          {Number(t.spreadCost).toFixed(2)}
-                        </Td>
-                      </tr>
+                        trade={data}
+                        origin={originByTrade.get(t.oandaTradeId) ?? null}
+                        note={noteByTrade.get(t.oandaTradeId) ?? null}
+                        currency={currency}
+                        columns={12}
+                      />
                     );
                   })}
                 </tbody>
@@ -375,27 +409,5 @@ function Th({
     >
       {children}
     </th>
-  );
-}
-
-function Td({
-  children,
-  align = "left",
-  className,
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-  className?: string;
-}) {
-  return (
-    <td
-      className={clsx(
-        "px-3 py-2",
-        align === "right" ? "text-right" : "text-left",
-        className,
-      )}
-    >
-      {children}
-    </td>
   );
 }

@@ -1,43 +1,29 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
-import { AlertTriangle, Ban, CheckCircle2, Power, ShieldCheck, X } from "lucide-react";
+import { Ban, Bell, BellOff, Check, Shield, TrendingDown, TrendingUp, X } from "lucide-react";
+import { usePersistedFlag } from "@/lib/stream/useAnimatedValue";
 import type { EngineEvent } from "@/lib/stream/events";
+import { BOOKS, type BookId } from "@/lib/books";
+import { formatTime } from "@/lib/time";
 import { clsx } from "@/lib/clsx";
 
 /**
- * Engine notifications, shown on every page.
+ * Engine announcements.
  *
- * The engine can act while Peter is looking at any screen, so what it did has
- * to reach him wherever he is rather than only on the order log.
+ * Mounted in the shell rather than on the Today page, because the moment worth
+ * announcing is precisely the one where you are looking at something else.
  *
- * Two rules about how these are presented:
- *
- *   • DRY RUN IS LABELLED, ALWAYS. A dry-run order and a real one produce the
- *     same headline from the same code path, and the only thing distinguishing
- *     them is whether it actually reached the broker. Anything not sent says so
- *     in the toast, so "the engine bought gold" can never be misread.
- *   • NOTHING AUTO-DISMISSES. A toast that fades after five seconds is one you
- *     will miss while reading a chart, and the whole point is that the engine's
- *     actions are seen. They stay until dismissed.
- *
- * Colour follows the app's rule: orange for interface and engine state, warn
- * amber for refusals and halts, and green/red reserved for money — which is why
- * a fill is announced in accent, not in profit-green.
+ * Colour follows the rule: every toast is interface state, so orange for a
+ * dry-run action, --color-warn for anything that reached the broker or was
+ * refused. No green or red anywhere here — a fill is not a profit, and colouring
+ * it as one would be the first crack in the only rule that makes a red number
+ * unambiguous.
  */
 
-const STYLES: Record<
-  EngineEvent["kind"],
-  { icon: typeof CheckCircle2; tone: "accent" | "warn" | "neutral" }
-> = {
-  fill: { icon: CheckCircle2, tone: "accent" },
-  managed: { icon: ShieldCheck, tone: "accent" },
-  armed: { icon: ShieldCheck, tone: "accent" },
-  dry_run: { icon: CheckCircle2, tone: "neutral" },
-  rejected: { icon: Ban, tone: "warn" },
-  disarmed: { icon: Power, tone: "neutral" },
-  halted: { icon: AlertTriangle, tone: "warn" },
-};
+const SOUND_KEY = "desk.engineSound";
+const VISIBLE_MS = 12_000;
 
 export function EngineToasts({
   events,
@@ -46,80 +32,199 @@ export function EngineToasts({
   events: EngineEvent[];
   onDismiss: (at: number) => void;
 }) {
+  const [soundOn, setSoundOn] = usePersistedFlag(SOUND_KEY);
+
+  useChime(events, soundOn);
+
+  /**
+   * Auto-dismiss on a timer, EXCEPT for anything that reached the broker.
+   *
+   * A real order that scrolled past while you were in another tab is the one
+   * message that must still be there when you look back. Dry runs and
+   * near-misses expire on their own.
+   */
+  useEffect(() => {
+    const timers = events
+      .filter((e) => !e.sent)
+      .map((e) =>
+        setTimeout(() => onDismiss(e.at), Math.max(0, e.at + VISIBLE_MS - Date.now())),
+      );
+    return () => timers.forEach(clearTimeout);
+  }, [events, onDismiss]);
+
   if (events.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
-      {/* Newest at the bottom, nearest the eye. */}
-      {events.slice(-5).map((e) => {
-        const style = STYLES[e.kind] ?? STYLES.managed;
-        const Icon = style.icon;
+    <div
+      className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col-reverse gap-2"
+      role="log"
+      aria-live="polite"
+      aria-label="Engine activity"
+    >
+      {events.slice(0, 4).map((e) => (
+        <Toast key={e.at} event={e} onDismiss={() => onDismiss(e.at)} />
+      ))}
 
-        return (
-          <div
-            key={`${e.at}-${e.kind}-${e.instrument ?? ""}`}
-            className={clsx(
-              "pointer-events-auto rounded-[var(--radius-tile)] border bg-[var(--color-card)] px-3.5 py-2.5 shadow-lg",
-              style.tone === "warn"
-                ? "border-[var(--color-warn)]/50"
-                : style.tone === "accent"
-                  ? "border-[var(--color-accent-line)]"
-                  : "border-[var(--color-line-strong)]",
-            )}
-          >
-            <div className="flex items-start gap-2.5">
-              <Icon
-                className={clsx(
-                  "mt-0.5 size-4 shrink-0",
-                  style.tone === "warn"
-                    ? "text-[var(--color-warn)]"
-                    : style.tone === "accent"
-                      ? "text-[var(--color-accent)]"
-                      : "text-[var(--color-ink-mute)]",
-                )}
-              />
-
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[13px] font-medium">{e.headline}</span>
-                  {!e.sent && (
-                    <span className="shrink-0 rounded bg-[var(--color-line)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-dim)]">
-                      not sent
-                    </span>
-                  )}
-                </div>
-
-                {e.detail && (
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--color-ink-mute)]">
-                    {e.detail}
-                  </p>
-                )}
-
-                <div className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-ink-faint)]">
-                  <span>{new Date(e.at).toLocaleTimeString("en-GB")}</span>
-                  <span>{e.book}</span>
-                  {e.instrument && <span>{e.instrument}</span>}
-                  {e.patternName && <span>{e.patternName}</span>}
-                  <Link
-                    href="/orders"
-                    className="ml-auto hover:text-[var(--color-accent)]"
-                  >
-                    order log
-                  </Link>
-                </div>
-              </div>
-
-              <button
-                onClick={() => onDismiss(e.at)}
-                className="shrink-0 rounded p-0.5 text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]"
-                aria-label="Dismiss"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          </div>
-        );
-      })}
+      <button
+        onClick={() => setSoundOn(!soundOn)}
+        className="pointer-events-auto ml-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-line)] bg-[var(--color-card-glass)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-ink-mute)] backdrop-blur transition-colors hover:text-[var(--color-ink-dim)]"
+      >
+        {soundOn ? <Bell className="size-3" /> : <BellOff className="size-3" />}
+        {soundOn ? "Sound on" : "Sound off"}
+      </button>
     </div>
   );
+}
+
+function Toast({ event, onDismiss }: { event: EngineEvent; onDismiss: () => void }) {
+  const book = BOOKS[event.book as BookId];
+  const isReject = event.kind === "rejected";
+
+  const Icon = isReject
+    ? Ban
+    : event.kind === "managed"
+      ? Shield
+      : event.kind === "fill"
+        ? event.headline.startsWith("Short")
+          ? TrendingDown
+          : TrendingUp
+        : Check;
+
+  return (
+    <div
+      className={clsx(
+        "toast-in pointer-events-auto flex items-start gap-2.5 rounded-[var(--radius-tile)] border bg-[var(--color-card-glass)] px-3.5 py-2.5 backdrop-blur",
+        event.sent
+          ? "border-[var(--color-warn)]/50 shadow-[0_0_24px_-8px_var(--color-warn)]"
+          : isReject
+            ? "border-[var(--color-line-strong)]"
+            : "border-[var(--color-accent-line)]",
+      )}
+    >
+      <Icon
+        className={clsx(
+          "mt-0.5 size-4 shrink-0",
+          event.sent
+            ? "text-[var(--color-warn)]"
+            : isReject
+              ? "text-[var(--color-ink-mute)]"
+              : "text-[var(--color-accent)]",
+        )}
+      />
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate text-[13px] font-semibold">{event.headline}</span>
+          <span className="label-faint shrink-0">{formatTime(new Date(event.at))}</span>
+        </div>
+
+        {event.detail && (
+          <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--color-ink-mute)]">
+            {event.detail}
+          </p>
+        )}
+
+        <div className="mt-1 flex items-center gap-2">
+          {book && (
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="size-1.5 rounded-full"
+                style={{ background: book.colorVar }}
+              />
+              <span className="text-[10px] text-[var(--color-ink-faint)]">{book.label}</span>
+            </span>
+          )}
+          {/* Says plainly whether this touched the broker. The distinction
+              between a dry run and a real order is the whole safety model. */}
+          <span
+            className={clsx(
+              "text-[10px] font-semibold uppercase tracking-wider",
+              event.sent ? "text-[var(--color-warn)]" : "text-[var(--color-ink-faint)]",
+            )}
+          >
+            {event.sent ? "sent to broker" : isReject ? "not placed" : "dry run"}
+          </span>
+          {event.oandaTradeId && event.sent && (
+            <Link
+              href="/orders"
+              className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]"
+            >
+              Order log
+            </Link>
+          )}
+        </div>
+      </div>
+
+      <button
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="shrink-0 text-[var(--color-ink-faint)] transition-colors hover:text-[var(--color-ink-dim)]"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A short tone on each new engine event.
+ *
+ * WebAudio rather than an audio file: no asset to ship, and no decode latency
+ * on the first play. Browsers refuse to start an AudioContext until the user has
+ * interacted with the page, so the context is created lazily on the first event
+ * and simply fails silently if the browser is not ready — a missed beep must
+ * never surface as an error on a trading screen.
+ */
+function useChime(events: EngineEvent[], enabled: boolean) {
+  const ctxRef = useRef<AudioContext | null>(null);
+  const lastSeen = useRef<number>(0);
+
+  useEffect(() => {
+    if (!enabled || events.length === 0) return;
+
+    const newest = events[0];
+    if (newest.at <= lastSeen.current) return;
+
+    // On first mount `lastSeen` is 0, which would replay a chime for every
+    // buffered event. Prime it instead and stay quiet until the next one.
+    const priming = lastSeen.current === 0;
+    lastSeen.current = newest.at;
+    if (priming) return;
+
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    try {
+      const Ctor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!Ctor) return;
+
+      const ctx = (ctxRef.current ??= new Ctor());
+      if (ctx.state === "suspended") void ctx.resume();
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      // A rejection drops in pitch, an action rises — distinguishable without
+      // looking at the screen, which is the only reason to have sound at all.
+      const up = newest.kind !== "rejected";
+      osc.frequency.setValueAtTime(up ? 660 : 440, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(
+        up ? 880 : 330,
+        ctx.currentTime + 0.09,
+      );
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.24);
+    } catch {
+      /* audio unavailable — the toast is the primary signal regardless */
+    }
+  }, [events, enabled]);
+
+  useEffect(() => () => void ctxRef.current?.close(), []);
 }

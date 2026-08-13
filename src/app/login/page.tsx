@@ -97,10 +97,17 @@ function LoginForm() {
           </button>
         </form>
 
+        {/* This used to promise the app never places orders. That stopped being
+            true when the execution engine landed, and a stale safety claim on
+            the login screen is the worst place to leave one — it is the single
+            sentence someone reads before deciding how carefully to treat this
+            password. Orders are still disarmed by default and still require a
+            second deliberate click to leave dry run; the copy now says that
+            rather than claiming an incapability the code no longer has. */}
         <p className="mt-4 text-center text-[11px] leading-relaxed text-[var(--color-ink-faint)]">
           This dashboard holds a live broker connection.
           <br />
-          It reads your account and never places orders.
+          It can place orders only while a book is armed and out of dry run.
         </p>
       </div>
     </div>

@@ -54,8 +54,12 @@ export type LivePosition = {
    * Derived from the broker's own numbers so no FX assumption is invented here.
    */
   plPerPrice: number;
-  /** Risk still on the table, in R. Zero once the stop is at or past entry. */
-  riskR: number;
+  /**
+   * Risk still on the table, in R. Zero once the stop is at or past entry.
+   * NULL when it cannot be computed — no stop, or no recorded opening stop.
+   * Unbounded, not small: see the note in desk/snapshot.ts.
+   */
+  riskR: number | null;
   /** Original risk distance in price terms — lets the browser recompute R live. */
   riskDistance: number | null;
   openedAt: number;
@@ -74,6 +78,8 @@ export type LiveBook = {
   todayR: number;
   todayTrades: number;
   openRiskR: number;
+  /** Positions with no computable risk. openRiskR excludes these entirely. */
+  openRiskUnbounded: number;
   dailyLimitR: number;
   positions: LivePosition[];
   /** Execution state, so the shell can show armed status on every page. */

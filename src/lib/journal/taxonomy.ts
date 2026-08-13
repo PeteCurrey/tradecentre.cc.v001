@@ -79,6 +79,31 @@ export function mistakeCategory(id: string): MistakeCategory["id"] | null {
 }
 
 /**
+ * Tilt markers, kept to six.
+ *
+ * A longer list gets skipped, and a skipped field is worse than no field — it
+ * makes the record look complete while carrying nothing.
+ *
+ * Lives HERE rather than beside the form that renders it. It used to sit in
+ * StateForm.tsx, which carries "use client": a server component importing a
+ * plain value out of a client module receives a client-reference proxy, not the
+ * array, so `TILT_MARKERS.map` threw at request time and took the whole
+ * Psychology screen down. Shared data belongs in a module with no directive.
+ */
+export const TILT_MARKERS = [
+  { id: "revenge_urge", label: "Revenge urge" },
+  { id: "frustration", label: "Frustration" },
+  { id: "boredom", label: "Boredom" },
+  { id: "overconfidence", label: "Overconfidence" },
+  { id: "fear_of_missing", label: "FOMO" },
+  { id: "fatigue", label: "Fatigue" },
+] as const;
+
+export function tiltLabel(id: string): string {
+  return TILT_MARKERS.find((t) => t.id === id)?.label ?? id;
+}
+
+/**
  * Process grades, deliberately independent of outcome.
  *
  * A well-executed loser is an A. A sloppy winner is a C. Without this

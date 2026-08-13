@@ -23,8 +23,12 @@ export type OpenPosition = {
   entryPrice: number;
   currentStop: number | null;
   unrealizedPl: number;
-  /** Risk still on the table, in R. Zero once the stop is at or past entry. */
-  riskR: number;
+  /**
+   * Risk still on the table, in R. Zero once the stop is at or past entry.
+   * NULL when it cannot be computed — no stop, or no recorded opening stop —
+   * which means the loss is unbounded, not that it is small.
+   */
+  riskR: number | null;
   /** The broker's mid at snapshot time, when pricing was reachable. */
   currentPrice: number | null;
   /**
@@ -53,7 +57,10 @@ export type BookSnapshot = {
   unrealizedPl: number;
 
   openPositions: OpenPosition[];
+  /** Sum over positions whose risk IS computable. */
   openRiskR: number;
+  /** Positions with no computable risk. openRiskR excludes these entirely. */
+  openRiskUnbounded: number;
 
   todayPl: number;
   todayR: number;
@@ -116,6 +123,7 @@ export async function getDeskSnapshot(): Promise<DeskSnapshot> {
         unrealizedPl: 0,
         openPositions: [],
         openRiskR: 0,
+        openRiskUnbounded: 0,
         todayPl: 0,
         todayR: 0,
         todayTrades: 0,
@@ -188,9 +196,23 @@ export async function getDeskSnapshot(): Promise<DeskSnapshot> {
           const currentStop = t.stopLossOrder?.price ? Number(t.stopLossOrder.price) : null;
           const initialStop = stored?.plannedStop ? Number(stored.plannedStop) : null;
 
-          // Remaining risk relative to the ORIGINAL risk. A stop moved to
-          // breakeven means zero risk left, not one R.
-          let riskR = currentStop === null ? 1 : 0;
+          /**
+           * Remaining risk relative to the ORIGINAL risk — or null when it
+           * cannot be computed at all.
+           *
+           * Null matters more than the arithmetic. This used to score a
+           * position with no stop as exactly 1R, which reads as a bounded,
+           * known risk when the truth is that the loss is unbounded. Ten
+           * unstopped positions then summed to a confident "OPEN RISK 10.00R"
+           * on the landing screen while the positions table called the same
+           * ten "unbounded" — the same fact, two answers, and the reassuring
+           * one on the hero.
+           *
+           * A stop with no recorded opening stop is null for the same reason:
+           * there is no denominator, so any R figure would be invented. A stop
+           * moved to breakeven is a real 0.00R and stays a number.
+           */
+          let riskR: number | null = null;
           if (currentStop !== null && initialStop !== null) {
             const originalDistance = Math.abs(entry - initialStop);
             const currentDistance =
@@ -237,13 +259,14 @@ export async function getDeskSnapshot(): Promise<DeskSnapshot> {
           entryPrice: Number(r.entryPrice),
           currentStop: r.plannedStop ? Number(r.plannedStop) : null,
           unrealizedPl: 0,
-          riskR: 1,
+          riskR: r.plannedStop ? 0 : null,
           currentPrice: null,
           unitValue: null,
         }));
       }
 
-      base.openRiskR = base.openPositions.reduce((s, p) => s + p.riskR, 0);
+      base.openRiskR = base.openPositions.reduce((s, p) => s + (p.riskR ?? 0), 0);
+      base.openRiskUnbounded = base.openPositions.filter((p) => p.riskR === null).length;
       return base;
     }),
   );

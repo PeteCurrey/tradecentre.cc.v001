@@ -233,20 +233,34 @@ export async function getHistory(opts: {
   if (opts.from) filters.push(gte(candlesTable.time, opts.from));
   if (opts.to) filters.push(lte(candlesTable.time, opts.to));
 
+  /**
+   * ⚠️ Sorted in Node, NOT in SQL.
+   *
+   * `ORDER BY time` looks free but is not. The planner reads this range with a
+   * bitmap index scan, which does not preserve order, so it adds a Sort node —
+   * and sorting ~180k rows spills to a temp file. On a small volume that fails
+   * outright with `could not write to file "base/pgsql_tmp/..."`, which is how
+   * this was found: a backtest that had all its data still could not read it.
+   *
+   * Ordering here instead costs nothing. Every row is being materialised into
+   * an array regardless, so the sort is in memory that is already allocated,
+   * and the database never needs scratch space to hand us our own data back.
+   */
   const rows = await db
     .select()
     .from(candlesTable)
-    .where(and(...filters))
-    .orderBy(asc(candlesTable.time));
+    .where(and(...filters));
 
-  return rows.map((r) => ({
-    time: r.time.getTime(),
-    o: Number(r.o),
-    h: Number(r.h),
-    l: Number(r.l),
-    c: Number(r.c),
-    v: r.tickVolume,
-  }));
+  return rows
+    .map((r) => ({
+      time: r.time.getTime(),
+      o: Number(r.o),
+      h: Number(r.h),
+      l: Number(r.l),
+      c: Number(r.c),
+      v: r.tickVolume,
+    }))
+    .sort((a, b) => a.time - b.time);
 }
 
 export type Coverage = {

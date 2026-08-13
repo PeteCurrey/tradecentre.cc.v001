@@ -49,7 +49,9 @@ export function PositionsTable({
   const shown = rows.filter((r) => inScope.has(r.book));
 
   const currency = shown[0]?.currency ?? "GBP";
-  const withStop = shown.filter((p) => p.currentStop !== null);
+  // A computable risk figure is the real test, not merely having a stop:
+  // a stop with no recorded opening stop still has no R denominator.
+  const withStop = shown.filter((p) => p.riskR !== null);
   const naked = shown.filter((p) => p.currentStop === null);
 
   // Live-adjusted unrealised P&L where a tick has arrived, broker figure where
@@ -62,7 +64,7 @@ export function PositionsTable({
   };
 
   const unrealized = shown.reduce((s, p) => s + liveP(p).pl, 0);
-  const openRiskR = withStop.reduce((s, p) => s + p.riskR, 0);
+  const openRiskR = withStop.reduce((s, p) => s + (p.riskR ?? 0), 0);
   const degradedInScope = snapshot.degraded.filter((b) => inScope.has(b));
 
   return (
@@ -254,7 +256,7 @@ export function PositionsTable({
                           {toStop !== null ? `${toStop.toFixed(2)}%` : "—"}
                         </Td>
                         <Td align="right">
-                          {p.currentStop !== null ? (
+                          {p.riskR !== null ? (
                             <span className="figure">{p.riskR.toFixed(2)}R</span>
                           ) : (
                             <span className="text-[var(--color-warn)]">unbounded</span>

@@ -248,6 +248,192 @@
   .money-flat {
     color: var(--color-flat);
   }
+
+  /* ==========================================================================
+     LIVE MOTION
+     Everything below animates on real data changing. Nothing here loops purely
+     for decoration except the armed rail and the scan sweep, both of which are
+     literally reporting "a process is running".
+     ========================================================================== */
+
+  /* ---- Money tick flash --------------------------------------------------
+     A value that just changed gets a brief wash of its own colour. Green/red
+     here is legitimate and load-bearing: these are P&L figures, so the colour
+     means exactly what it means everywhere else in the app. */
+  .flash-up {
+    animation: flash-up 600ms var(--ease-out-quint);
+  }
+  .flash-down {
+    animation: flash-down 600ms var(--ease-out-quint);
+  }
+
+  /* ---- Armed shell -------------------------------------------------------
+     A rail down the left edge of the whole app. Deliberately not a border on
+     the card: the point is that it is visible on EVERY page. */
+  .desk-armed {
+    position: relative;
+  }
+  .desk-armed::after {
+    content: "";
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 2px;
+    z-index: 40;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      var(--color-accent) 20%,
+      var(--color-accent) 80%,
+      transparent
+    );
+    animation: rail-breathe 3.2s ease-in-out infinite;
+  }
+
+  /* Out of dry run — real orders can reach the broker. A different colour,
+     not a louder version of the same one, because it is a different state. */
+  .desk-armed-live::after {
+    background: linear-gradient(
+      180deg,
+      transparent,
+      var(--color-warn) 20%,
+      var(--color-warn) 80%,
+      transparent
+    );
+    width: 3px;
+    animation-duration: 1.8s;
+  }
+
+  /* Halted is static on purpose: nothing is running, so nothing should move. */
+  .desk-halted::after {
+    content: "";
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 2px;
+    z-index: 40;
+    pointer-events: none;
+    background: var(--color-warn);
+    opacity: 0.5;
+    animation: none;
+  }
+
+  /* ---- Ribbon flow -------------------------------------------------------
+     Dashes travelling along a risk ribbon. Speed is set inline from the
+     position's size, so a bigger commitment visibly flows harder. */
+  .ribbon-flow {
+    stroke-dasharray: 2 14;
+    animation: ribbon-flow 1.4s linear infinite;
+  }
+
+  /* ---- Scan sweep --------------------------------------------------------
+     The engine's heartbeat between trades. */
+  .scan-sweep {
+    animation: scan-sweep 2.6s var(--ease-out-quint) infinite;
+    transform-origin: center;
+  }
+
+  .pulse-ring {
+    animation: pulse-ring 2s var(--ease-out-quint) infinite;
+  }
+
+  /* ---- Toast entrance ---------------------------------------------------- */
+  .toast-in {
+    animation: toast-in 320ms var(--ease-out-quint);
+  }
+
+  /* ---- Row expansion ----------------------------------------------------- */
+  .expand-in {
+    animation: expand-in 240ms var(--ease-out-quint);
+  }
+}
+
+@keyframes flash-up {
+  0% {
+    background-color: var(--color-profit-wash);
+    box-shadow: 0 0 0 1px var(--color-profit-wash);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes flash-down {
+  0% {
+    background-color: var(--color-loss-wash);
+    box-shadow: 0 0 0 1px var(--color-loss-wash);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes rail-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes ribbon-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@keyframes scan-sweep {
+  0% {
+    opacity: 0;
+    transform: rotate(0deg);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.85);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes expand-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @keyframes live-pulse {
@@ -271,5 +457,31 @@
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /**
+   * STATE MUST SURVIVE THE MOTION BEING TURNED OFF.
+   *
+   * The rule above collapses every animation to nothing, which is right for
+   * decoration and wrong for anything whose visibility depends on an animated
+   * property. "The engine is armed" and "this value just changed" are
+   * information, not flourish — so they are restated statically here rather
+   * than being left to freeze on an arbitrary keyframe.
+   */
+  .desk-armed::after,
+  .desk-halted::after {
+    opacity: 1 !important;
+  }
+
+  .flash-up {
+    background-color: var(--color-profit-wash);
+  }
+  .flash-down {
+    background-color: var(--color-loss-wash);
+  }
+
+  /* A dashed ribbon that cannot travel still reads as "carrying something". */
+  .ribbon-flow {
+    stroke-dasharray: 2 14;
   }
 }
