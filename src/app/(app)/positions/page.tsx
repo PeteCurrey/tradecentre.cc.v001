@@ -1,13 +1,37 @@
-import { ComingSoon, PageHeader } from "@/components/ui/Page";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { requireSession } from "@/lib/auth/guard";
+import { trades } from "@/lib/db/schema";
+import { getDeskSnapshot } from "@/lib/desk/snapshot";
+import { PositionsTable, type PositionRow } from "@/components/positions/PositionsTable";
 
-export default function Page() {
-  return (
-    <>
-      <PageHeader title="Open Positions" subtitle={"What's currently on, with streaming P&L"} />
-      <ComingSoon
-        phase="Phase 1"
-        describes={"Live management of open trades, with streaming P&L, current R, and distance to stop and target. Matters most for the swing and position books that carry overnight."}
-      />
-    </>
+export const dynamic = "force-dynamic";
+
+export default async function PositionsPage() {
+  await requireSession();
+
+  const [snapshot, openRows] = await Promise.all([
+    getDeskSnapshot(),
+    db.select().from(trades).where(eq(trades.state, "open")),
+  ]);
+
+  // Link each broker position back to its derived row so the instrument name
+  // opens the trade detail. Positions the ledger hasn't caught up with yet
+  // simply render without a link rather than 404ing.
+  const rows: PositionRow[] = snapshot.books.flatMap((b) =>
+    b.openPositions.map((p) => {
+      const stored = openRows.find(
+        (t) => t.oandaTradeId === p.oandaTradeId && t.book === b.book,
+      );
+      return {
+        ...p,
+        book: b.book,
+        currency: b.currency,
+        tradeRowId: stored?.id ?? null,
+        entryTime: stored?.entryTime.toISOString() ?? null,
+      };
+    }),
   );
+
+  return <PositionsTable snapshot={snapshot} rows={rows} />;
 }

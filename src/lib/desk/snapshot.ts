@@ -25,6 +25,18 @@ export type OpenPosition = {
   unrealizedPl: number;
   /** Risk still on the table, in R. Zero once the stop is at or past entry. */
   riskR: number;
+  /** The broker's mid at snapshot time, when pricing was reachable. */
+  currentPrice: number | null;
+  /**
+   * Account-currency value of a one-unit, one-price-point move.
+   *
+   * CALIBRATED from two figures the broker reported together — its own
+   * unrealised P&L and its own current price — rather than derived from a
+   * conversion table we would have to keep correct. Null when the position is
+   * too close to flat for the division to be meaningful, in which case the
+   * screen shows the broker's P&L and does not attempt to stream it.
+   */
+  unitValue: number | null;
 };
 
 export type BookSnapshot = {
@@ -149,6 +161,27 @@ export async function getDeskSnapshot(): Promise<DeskSnapshot> {
         base.marginAvailable = Number(summary.marginAvailable);
         base.unrealizedPl = Number(summary.unrealizedPL);
 
+        // One pricing call for every instrument on, so the table can show a
+        // "now" price beside each entry without a call per position.
+        const instruments = [...new Set(openTrades.map((t) => t.instrument))];
+        const priceByInstrument = new Map<string, number>();
+        if (instruments.length > 0) {
+          try {
+            for (const p of await oanda(account.environment).pricing(
+              account.id,
+              instruments,
+            )) {
+              const bid = Number(p.bids?.[0]?.price ?? p.closeoutBid);
+              const ask = Number(p.asks?.[0]?.price ?? p.closeoutAsk);
+              if (Number.isFinite(bid) && Number.isFinite(ask)) {
+                priceByInstrument.set(p.instrument, (bid + ask) / 2);
+              }
+            }
+          } catch {
+            // Prices are a nicety here; positions still render without them.
+          }
+        }
+
         base.openPositions = openTrades.map((t) => {
           const stored = openRows.find((r) => r.oandaTradeId === t.id);
           const entry = Number(t.price);
@@ -167,15 +200,29 @@ export async function getDeskSnapshot(): Promise<DeskSnapshot> {
             riskR = originalDistance > 0 ? currentDistance / originalDistance : 0;
           }
 
+          const units = Number(t.currentUnits);
+          const unrealizedPl = Number(t.unrealizedPL);
+          const currentPrice = priceByInstrument.get(t.instrument) ?? null;
+
+          // Only calibrate when the move is big enough that rounding in the
+          // broker's P&L cannot dominate the ratio.
+          const move = currentPrice === null ? 0 : (currentPrice - entry) * units;
+          const unitValue =
+            Math.abs(move) > 1e-6 && Number.isFinite(unrealizedPl)
+              ? unrealizedPl / move
+              : null;
+
           return {
             oandaTradeId: t.id,
             instrument: t.instrument,
-            direction: Number(t.currentUnits) >= 0 ? "long" : "short",
-            units: Number(t.currentUnits),
+            direction: units >= 0 ? "long" : "short",
+            units,
             entryPrice: entry,
             currentStop,
-            unrealizedPl: Number(t.unrealizedPL),
+            unrealizedPl,
             riskR,
+            currentPrice,
+            unitValue,
           };
         });
       } catch {
@@ -191,6 +238,8 @@ export async function getDeskSnapshot(): Promise<DeskSnapshot> {
           currentStop: r.plannedStop ? Number(r.plannedStop) : null,
           unrealizedPl: 0,
           riskR: 1,
+          currentPrice: null,
+          unitValue: null,
         }));
       }
 
