@@ -41,3 +41,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local MCP server wiring. No credentials, but it hardcodes absolute paths
+# under one machine's home directory, so it is setup rather than source.
+.mcp.json
