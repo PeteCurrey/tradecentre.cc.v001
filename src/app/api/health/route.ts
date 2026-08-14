@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { hasSession } from "@/lib/auth/guard";
+import { env } from "@/lib/env";
 
 /**
  * Health check.
@@ -66,6 +67,40 @@ function describeDatabaseUrl(raw: string | undefined): string {
   }
 }
 
+/**
+ * Host:port for a connection string, with credentials stripped.
+ *
+ * Never returns the password — this is for telling two URLs apart, not for
+ * copying one out of a running container.
+ */
+function hostOf(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return `${u.username ? `${u.username}@` : ""}${u.hostname}:${u.port || "5432"}`;
+  } catch {
+    return "unparseable";
+  }
+}
+
+/**
+ * Which variable is the connection actually coming from?
+ *
+ * A dashboard showing the right value proves nothing if the running container
+ * has a different one, or if a second variable is shadowing the one that was
+ * edited. This lists every name the resolver considers, so "I changed it and
+ * nothing happened" becomes a question with an answer rather than a guess.
+ */
+function databaseUrlSources(): Record<string, string | null> {
+  return {
+    DATABASE_URL: hostOf(process.env.DATABASE_URL),
+    POSTGRES_URL: hostOf(process.env.POSTGRES_URL),
+    DATABASE_PUBLIC_URL: hostOf(process.env.DATABASE_PUBLIC_URL),
+    RESOLVED: hostOf(env().DATABASE_URL),
+    RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT ?? null,
+  };
+}
+
 /** Flatten an error chain — postgres.js hides the real cause underneath. */
 function unwrap(e: unknown): string {
   const parts: string[] = [];
@@ -107,7 +142,13 @@ export async function GET() {
   // The connection SHAPE is reported whether or not the query succeeds. An
   // earlier version computed it only on success, which hid the single most
   // useful fact — pooler or direct host — at exactly the moment it mattered.
-  const shape = describeDatabaseUrl(process.env.DATABASE_URL);
+  //
+  // Describe the RESOLVED url — the one @/lib/db actually dials — not the raw
+  // DATABASE_URL. env() resolves aliases (POSTGRES_URL) and can substitute
+  // DATABASE_PUBLIC_URL, so the raw variable and the live connection are not
+  // always the same string. Reporting the raw one sent Peter to fix a variable
+  // that was not the one in use.
+  const shape = describeDatabaseUrl(env().DATABASE_URL);
 
   checks.push(
     await timed("database", async () => {
@@ -169,7 +210,13 @@ export async function GET() {
   }
 
   return Response.json(
-    { ok, checks, node: process.version, env: process.env.NODE_ENV },
+    {
+      ok,
+      checks,
+      database_url_sources: databaseUrlSources(),
+      node: process.version,
+      env: process.env.NODE_ENV,
+    },
     { status: ok ? 200 : 503 },
   );
 }
