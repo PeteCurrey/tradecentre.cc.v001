@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "tradingview": {
+      "command": "node",
+      "args": ["/Users/petercurrey/.local/share/tradingview-mcp/src/server.js"],
+      "env": {
+        "IF_DB_PATH": "/Users/petercurrey/.local/share/tradingview-mcp/data/indicator_fetch.db"
+      }
+    }
+  }
+}
