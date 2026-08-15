@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { passwordHashIsWellFormed, verifyPassword } from "@/lib/auth/password";
 import { createSession, sessionCookieOptions } from "@/lib/auth/session";
+import { ownerUser } from "@/lib/identity/user";
 import { isAuthConfigured } from "@/lib/env";
 
 // scrypt is Node-only.
@@ -79,10 +80,15 @@ export async function POST(req: NextRequest) {
 
   attempts.count = 0;
 
+  // The password login is the owner. Resolving the row here means the session
+  // carries a real user id from the start, so chat and anything else
+  // multi-tenant needs no special case for Peter.
+  const owner = await ownerUser();
+
   const res = NextResponse.json({ ok: true });
   res.cookies.set({
     ...sessionCookieOptions(process.env.NODE_ENV === "production"),
-    value: await createSession(),
+    value: await createSession(owner.id),
   });
   return res;
 }

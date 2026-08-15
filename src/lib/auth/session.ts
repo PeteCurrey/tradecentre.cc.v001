@@ -27,8 +27,16 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export async function createSession(): Promise<string> {
-  return new SignJWT({ sub: "peter" })
+/**
+ * Issue a session.
+ *
+ * `uid` is the local `users.id` this session acts as. It is optional so that
+ * an existing cookie minted before the users table existed keeps working —
+ * see readSession, which resolves the absent case to the owner rather than
+ * logging Peter out on deploy.
+ */
+export async function createSession(uid?: number): Promise<string> {
+  return new SignJWT(uid === undefined ? { sub: "peter" } : { sub: "peter", uid })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setIssuer(ISSUER)
@@ -46,6 +54,26 @@ export async function verifySession(token: string | undefined): Promise<boolean>
     // Expired, tampered with, or signed by an older AUTH_SECRET. All mean
     // "not logged in" — never distinguish these to the caller.
     return false;
+  }
+}
+
+/**
+ * The user id a valid session carries, or null if the token is not valid.
+ *
+ * `undefined` uid means a cookie issued before sessions were tied to a user
+ * row. That is Peter's password login by definition — nothing else could ever
+ * have minted one — so the caller resolves it to the owner.
+ */
+export async function readSessionUid(
+  token: string | undefined,
+): Promise<{ uid: number | undefined } | null> {
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secret(), { issuer: ISSUER });
+    const uid = payload.uid;
+    return { uid: typeof uid === "number" ? uid : undefined };
+  } catch {
+    return null;
   }
 }
 

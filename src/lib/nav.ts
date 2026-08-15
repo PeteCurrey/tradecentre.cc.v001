@@ -18,6 +18,7 @@ import {
   HeartPulse,
   LineChart,
   ListChecks,
+  MessagesSquare,
   Radio,
   ScrollText,
   Settings,
@@ -190,6 +191,12 @@ export const NAV: NavGroup[] = [
         label: "Charts",
         icon: CandlestickChart,
         hint: "TradingView — search any symbol, any timeframe",
+      },
+      {
+        href: "/chat",
+        label: "Chat",
+        icon: MessagesSquare,
+        hint: "Member rooms — opinions, not advice",
       },
       {
         href: "/market-context",

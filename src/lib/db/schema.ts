@@ -651,3 +651,97 @@ export const aiRuns = pgTable(
   },
   (t) => [index("ai_runs_created_idx").on(t.createdAt), index("ai_runs_task_idx").on(t.task)],
 );
+
+/* ==========================================================================
+   MEMBERS AND CHAT
+   --------------------------------------------------------------------------
+   The first multi-tenant surface. Everything above this line belongs to one
+   trader; everything below assumes many.
+   ========================================================================== */
+
+/**
+ * A person who can use this platform.
+ *
+ * ── Identity lives at drawdown.trading, not here ──────────────────────────
+ * This app never holds a password for a subscriber. Drawdown authenticates
+ * them and issues a signed token; `externalId` is that system's user id and is
+ * the only durable link between the two. Nothing here is a credential, so a
+ * dump of this table cannot be used to log in anywhere.
+ *
+ * Peter's own single-password login continues to work and resolves to a row
+ * here with a reserved `externalId`, so one code path serves both rather than
+ * a permanent special case threaded through every query.
+ */
+export const users = pgTable(
+  "users",
+  {
+    id: serial("id").primaryKey(),
+    /** Drawdown's user id. Reserved value "local:owner" is the password login. */
+    externalId: text("external_id").notNull(),
+    displayName: text("display_name").notNull(),
+    /**
+     * Chat is not available until the terms are accepted, and this records
+     * WHEN rather than whether — an undated boolean cannot answer "which terms
+     * did they agree to", which is the question that actually gets asked.
+     */
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+    /** Version of the terms accepted, so a re-acceptance can be required. */
+    termsVersion: text("terms_version"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("users_external_idx").on(t.externalId)],
+);
+
+/**
+ * A chat room. Rooms rather than DMs — with a small membership, one busy room
+ * beats a hundred silent private threads.
+ */
+export const chatRooms = pgTable(
+  "chat_rooms",
+  {
+    /** URL-safe and stable, e.g. "xauusd". Rooms are addressed by slug. */
+    slug: text("slug").primaryKey(),
+    label: text("label").notNull(),
+    topic: text("topic"),
+    /** Optional OANDA instrument this room is about, for cross-linking. */
+    instrument: text("instrument"),
+    archived: boolean("archived").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chat_rooms_archived_idx").on(t.archived)],
+);
+
+/**
+ * A message.
+ *
+ * ── History is permanent ──────────────────────────────────────────────────
+ * Deliberately NO retention cutoff, unlike `feed_items` which ages out. Two
+ * reasons: a room's history is the archive of what people actually said as a
+ * market moved, and a platform carrying trading discussion may need to produce
+ * that record later. Deletion is therefore a moderation act with an audit
+ * trail — `deletedAt` and `deletedBy` — never a row disappearing.
+ */
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: serial("id").primaryKey(),
+    roomSlug: text("room_slug")
+      .notNull()
+      .references(() => chatRooms.slug, { onDelete: "cascade" }),
+    /**
+     * No cascade on delete: removing a person must never silently rewrite a
+     * conversation other people took part in.
+     */
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    /** Moderation. The row stays; the body stops being shown. */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: integer("deleted_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [index("chat_messages_room_idx").on(t.roomSlug, t.id)],
+);

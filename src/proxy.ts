@@ -19,7 +19,12 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
  * in to diagnose it. Its unauthenticated response carries only pass/fail per
  * check — no hostnames, no error text, no configuration detail.
  */
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
+/**
+ * /api/auth/sso is public of necessity: it is the door a drawdown.trading
+ * subscriber arrives at with no session yet. It can do nothing but verify a
+ * signature it has no way to forge.
+ */
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/sso", "/api/health"];
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
