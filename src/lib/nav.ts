@@ -6,6 +6,7 @@ import {
   BookOpen,
   Boxes,
   CalendarDays,
+  CandlestickChart,
   ClipboardList,
   Clock4,
   Cpu,
@@ -183,6 +184,12 @@ export const NAV: NavGroup[] = [
         label: "The Wire",
         icon: Radio,
         hint: "Live news, central banks, releases and filings — newest first",
+      },
+      {
+        href: "/charts",
+        label: "Charts",
+        icon: CandlestickChart,
+        hint: "TradingView — search any symbol, any timeframe",
       },
       {
         href: "/market-context",
