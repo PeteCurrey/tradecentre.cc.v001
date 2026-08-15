@@ -479,6 +479,45 @@ export const macroEvents = pgTable(
   (t) => [index("macro_time_idx").on(t.time)],
 );
 
+/**
+ * The Wire — a flowing feed of what is happening, as opposed to the dated
+ * schedule above.
+ *
+ * `macro_events` answers "what is due"; this answers "what just happened".
+ * They stay separate tables because they have different shapes and different
+ * lifetimes: a calendar entry is known days ahead and updated in place, while a
+ * feed item is immutable once published and ages out.
+ *
+ * Persisted rather than fetched per render for three reasons: the stream must
+ * survive a reload, two providers routinely carry the same wire story and need
+ * deduping, and "since you last looked" is meaningless without history.
+ */
+export const feedItems = pgTable(
+  "feed_items",
+  {
+    /** Source-prefixed and deterministic, e.g. "sec:0000320193-24-000123". */
+    id: text("id").primaryKey(),
+    source: text("source").notNull(), // polygon | finnhub | fed | sec | macro
+    category: text("category").notNull(), // news | central_bank | economic | filing
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    headline: text("headline").notNull(),
+    summary: text("summary"),
+    url: text("url"),
+    /** Equity symbols exactly as the provider gave them — Alpaca's universe. */
+    tickers: text("tickers").array().notNull().default([]),
+    /** Resolved to OANDA instrument names. See lib/feed/resolve.ts for the rules. */
+    instruments: text("instruments").array().notNull().default([]),
+    /**
+     * 1–3, driving visual emphasis ONLY. It never reorders the feed: a stream
+     * that rearranges itself is one you cannot trust to have shown you
+     * something, so absence has to be meaningful.
+     */
+    importance: smallint("importance"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("feed_published_idx").on(t.publishedAt)],
+);
+
 /* ==========================================================================
    AUTONOMOUS EXECUTION
    --------------------------------------------------------------------------

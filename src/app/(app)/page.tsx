@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth/guard";
 import { getDeskSnapshot } from "@/lib/desk/snapshot";
 import { LiveDesk } from "@/components/desk/LiveDesk";
+import { WirePanel } from "@/components/feed/WirePanel";
 
 // Broker state, so never cached.
 export const dynamic = "force-dynamic";
@@ -15,5 +16,5 @@ export const dynamic = "force-dynamic";
 export default async function TodayPage() {
   await requireSession();
   const snapshot = await getDeskSnapshot();
-  return <LiveDesk snapshot={snapshot} />;
+  return <LiveDesk snapshot={snapshot} wire={<WirePanel />} />;
 }

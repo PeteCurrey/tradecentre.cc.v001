@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Activity, AlertTriangle, Crosshair, Layers, Percent, Wallet } from "lucide-react";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
 import { RadialGauge } from "@/components/ui/RadialGauge";
@@ -31,7 +31,20 @@ import { clsx } from "@/lib/clsx";
  * `useDeskBooks` below rather than by rendering the snapshot until the stream
  * arrives — a swap would flash different numbers a second after load.
  */
-export function LiveDesk({ snapshot }: { snapshot: DeskSnapshot }) {
+export function LiveDesk({
+  snapshot,
+  wire,
+}: {
+  snapshot: DeskSnapshot;
+  /**
+   * The Wire panel, rendered on the server and passed in as a slot.
+   *
+   * It reads the database, so it cannot live inside this client component —
+   * and passing it as a node rather than lifting the whole desk to the server
+   * keeps the live P&L exactly as it is.
+   */
+  wire?: ReactNode;
+}) {
   const { scope } = useScope();
   const { desk, ticks, scan, state } = useLive();
   const armLevel = useArmLevel();
@@ -343,7 +356,10 @@ export function LiveDesk({ snapshot }: { snapshot: DeskSnapshot }) {
           )}
         </Card>
 
-        <LivePrices />
+        <div className="flex flex-col gap-4">
+          <LivePrices />
+          {wire}
+        </div>
       </div>
     </>
   );

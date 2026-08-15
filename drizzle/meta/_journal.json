@@ -43,6 +43,13 @@
       "when": 1786630673195,
       "tag": "0005_luxuriant_longshot",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786697505514,
+      "tag": "0006_clammy_jackpot",
+      "breakpoints": true
     }
   ]
 }

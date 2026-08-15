@@ -17,6 +17,7 @@ import {
   HeartPulse,
   LineChart,
   ListChecks,
+  Radio,
   ScrollText,
   Settings,
   ShieldAlert,
@@ -177,6 +178,12 @@ export const NAV: NavGroup[] = [
     id: "research",
     label: "Research",
     items: [
+      {
+        href: "/wire",
+        label: "The Wire",
+        icon: Radio,
+        hint: "Live news, central banks, releases and filings — newest first",
+      },
       {
         href: "/market-context",
         label: "Market Context",
