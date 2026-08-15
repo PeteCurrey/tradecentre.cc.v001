@@ -38,7 +38,10 @@ export type ChatMessage = {
   id: number;
   roomSlug: string;
   userId: number;
+  /** The chosen username, falling back to the Drawdown name if unset. */
   author: string;
+  jobTitle: string | null;
+  avatar: string | null;
   body: string;
   createdAt: Date;
   deleted: boolean;
@@ -109,7 +112,10 @@ export async function readRoom(
       body: chatMessages.body,
       createdAt: chatMessages.createdAt,
       deletedAt: chatMessages.deletedAt,
-      author: users.displayName,
+      username: users.username,
+      displayName: users.displayName,
+      jobTitle: users.jobTitle,
+      avatar: users.avatar,
     })
     .from(chatMessages)
     .innerJoin(users, eq(users.id, chatMessages.userId))
@@ -123,7 +129,11 @@ export async function readRoom(
     id: r.id,
     roomSlug: r.roomSlug,
     userId: r.userId,
-    author: r.author,
+    author: r.username ?? r.displayName,
+    jobTitle: r.jobTitle,
+    // A removed message shows no avatar either — the row is a tombstone, not a
+    // post with the words taken out.
+    avatar: r.deletedAt ? null : r.avatar,
     body: r.deletedAt ? "" : r.body,
     createdAt: r.createdAt,
     deleted: r.deletedAt !== null,
@@ -145,7 +155,12 @@ export async function postMessage(
     .returning();
 
   const [author] = await db
-    .select({ displayName: users.displayName })
+    .select({
+      username: users.username,
+      displayName: users.displayName,
+      jobTitle: users.jobTitle,
+      avatar: users.avatar,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
@@ -154,7 +169,9 @@ export async function postMessage(
     id: row.id,
     roomSlug: row.roomSlug,
     userId: row.userId,
-    author: author?.displayName ?? "Member",
+    author: author?.username ?? author?.displayName ?? "Member",
+    jobTitle: author?.jobTitle ?? null,
+    avatar: author?.avatar ?? null,
     body: row.body,
     createdAt: row.createdAt,
     deleted: false,

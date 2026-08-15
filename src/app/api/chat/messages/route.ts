@@ -6,11 +6,7 @@ import {
   readRoom,
   roomExists,
 } from "@/lib/chat/rooms";
-import {
-  currentUser,
-  hasAcceptedChatTerms,
-  type CurrentUser,
-} from "@/lib/identity/user";
+import { canUseChat, currentUser, type CurrentUser } from "@/lib/identity/user";
 
 /**
  * Chat read and write.
@@ -62,7 +58,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     messages: messages.map((m) => ({ ...m, createdAt: m.createdAt.toISOString() })),
     me: user.id,
-    canPost: hasAcceptedChatTerms(user),
+    canPost: canUseChat(user),
   });
 }
 
@@ -75,9 +71,12 @@ export async function POST(req: NextRequest) {
   const user = await requireMember();
   if (user instanceof NextResponse) return user;
 
-  if (!hasAcceptedChatTerms(user)) {
+  // Re-checked here, not merely in the UI: completing the wizard AND having
+  // the switch on are both required, and a server action or fetch reaches this
+  // route whatever the screen is showing.
+  if (!canUseChat(user)) {
     return NextResponse.json(
-      { error: "Accept the chat terms before posting." },
+      { error: "Complete chat setup and switch chat on before posting." },
       { status: 403 },
     );
   }

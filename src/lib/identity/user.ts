@@ -26,9 +26,32 @@ export type CurrentUser = {
   displayName: string;
   termsAcceptedAt: Date | null;
   termsVersion: string | null;
+  /* Chat profile — null until the wizard is completed. */
+  username: string | null;
+  jobTitle: string | null;
+  avatar: string | null;
+  chatEnabled: boolean;
+  onboardedAt: Date | null;
   /** The password login. Not a permission system — see the note below. */
   isOwner: boolean;
 };
+
+/** One mapper, so a new column cannot be wired into one path and not the other. */
+function toCurrentUser(row: typeof users.$inferSelect): CurrentUser {
+  return {
+    id: row.id,
+    externalId: row.externalId,
+    displayName: row.displayName,
+    termsAcceptedAt: row.termsAcceptedAt,
+    termsVersion: row.termsVersion,
+    username: row.username,
+    jobTitle: row.jobTitle,
+    avatar: row.avatar,
+    chatEnabled: row.chatEnabled,
+    onboardedAt: row.onboardedAt,
+    isOwner: row.externalId === OWNER_EXTERNAL_ID,
+  };
+}
 
 /**
  * Find or create a user by external id.
@@ -52,14 +75,7 @@ export async function upsertUser(
     })
     .returning();
 
-  return {
-    id: row.id,
-    externalId: row.externalId,
-    displayName: row.displayName,
-    termsAcceptedAt: row.termsAcceptedAt,
-    termsVersion: row.termsVersion,
-    isOwner: row.externalId === OWNER_EXTERNAL_ID,
-  };
+  return toCurrentUser(row);
 }
 
 /** The owner row, created on first use. */
@@ -88,14 +104,7 @@ export async function currentUser(): Promise<CurrentUser | null> {
   // signed out rather than resurrecting a deleted member.
   if (!row) return null;
 
-  return {
-    id: row.id,
-    externalId: row.externalId,
-    displayName: row.displayName,
-    termsAcceptedAt: row.termsAcceptedAt,
-    termsVersion: row.termsVersion,
-    isOwner: row.externalId === OWNER_EXTERNAL_ID,
-  };
+  return toCurrentUser(row);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -112,6 +121,21 @@ export const CHAT_TERMS_VERSION = "2026-08-1";
 
 export function hasAcceptedChatTerms(u: CurrentUser): boolean {
   return u.termsAcceptedAt !== null && u.termsVersion === CHAT_TERMS_VERSION;
+}
+
+/**
+ * Has this member finished the wizard on the CURRENT terms?
+ *
+ * A terms bump sends them back through it. That is the point of versioning:
+ * "they agreed to something once" is not the question anyone will ask later.
+ */
+export function hasCompletedChatOnboarding(u: CurrentUser): boolean {
+  return u.onboardedAt !== null && u.username !== null && hasAcceptedChatTerms(u);
+}
+
+/** May this member post right now? */
+export function canUseChat(u: CurrentUser): boolean {
+  return hasCompletedChatOnboarding(u) && u.chatEnabled;
 }
 
 export async function acceptChatTerms(userId: number): Promise<void> {

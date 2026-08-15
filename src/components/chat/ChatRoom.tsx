@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { clsx } from "@/lib/clsx";
+import { initials } from "@/lib/identity/profile";
 
 /**
  * A room.
@@ -26,6 +27,8 @@ export type Message = {
   id: number;
   userId: number;
   author: string;
+  jobTitle: string | null;
+  avatar: string | null;
   body: string;
   createdAt: string;
   deleted: boolean;
@@ -158,31 +161,60 @@ export function ChatRoom({
           // Collapse the name when the same person speaks twice running.
           const runOn = i > 0 && messages[i - 1].userId === m.userId;
           return (
-            <div key={m.id} className={clsx("px-1 py-0.5", runOn ? "" : "mt-3")}>
-              {!runOn && (
-                <div className="flex items-baseline gap-2">
-                  <span
-                    className={clsx(
-                      "text-xs font-semibold",
-                      mine ? "text-[var(--color-accent)]" : "text-[var(--color-ink)]",
+            <div
+              key={m.id}
+              className={clsx("flex gap-2.5 px-1 py-0.5", runOn ? "" : "mt-3")}
+            >
+              {/* The avatar column is always present, empty on a run-on, so
+                  consecutive messages from one person stay left-aligned with
+                  the first rather than stepping in and out. */}
+              <div className="w-7 shrink-0">
+                {!runOn &&
+                  (m.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={m.avatar}
+                      alt=""
+                      className="size-7 rounded-full border border-[var(--color-line)] object-cover"
+                    />
+                  ) : (
+                    <div className="grid size-7 place-items-center rounded-full border border-[var(--color-line)] bg-[var(--color-sunken)] text-[10px] font-semibold text-[var(--color-ink-mute)]">
+                      {initials(m.author)}
+                    </div>
+                  ))}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                {!runOn && (
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span
+                      className={clsx(
+                        "text-xs font-semibold",
+                        mine ? "text-[var(--color-accent)]" : "text-[var(--color-ink)]",
+                      )}
+                    >
+                      {m.author}
+                    </span>
+                    {m.jobTitle && (
+                      <span className="text-[10px] text-[var(--color-ink-faint)]">
+                        {m.jobTitle}
+                      </span>
                     )}
-                  >
-                    {m.author}
-                  </span>
-                  <span className="tabular-nums text-[10px] text-[var(--color-ink-faint)]">
-                    {time(m.createdAt)}
-                  </span>
-                </div>
-              )}
-              {m.deleted ? (
-                <p className="text-[13px] italic text-[var(--color-ink-faint)]">
-                  Message removed
-                </p>
-              ) : (
-                <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-[var(--color-ink-dim)]">
-                  {m.body}
-                </p>
-              )}
+                    <span className="tabular-nums text-[10px] text-[var(--color-ink-faint)]">
+                      {time(m.createdAt)}
+                    </span>
+                  </div>
+                )}
+                {m.deleted ? (
+                  <p className="text-[13px] italic text-[var(--color-ink-faint)]">
+                    Message removed
+                  </p>
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-[var(--color-ink-dim)]">
+                    {m.body}
+                  </p>
+                )}
+              </div>
             </div>
           );
         })}
@@ -212,7 +244,7 @@ export function ChatRoom({
         </form>
       ) : (
         <p className="mt-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2.5 text-xs text-[var(--color-ink-mute)]">
-          Accept the chat terms to post. You can read without accepting.
+          Chat is switched off for your account. Turn it on to post.
         </p>
       )}
 

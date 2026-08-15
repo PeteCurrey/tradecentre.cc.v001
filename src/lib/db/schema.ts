@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -687,10 +688,50 @@ export const users = pgTable(
     termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
     /** Version of the terms accepted, so a re-acceptance can be required. */
     termsVersion: text("terms_version"),
+
+    /* ---- Chat profile, set during onboarding ---- */
+
+    /**
+     * The name shown in chat, chosen by the member.
+     *
+     * Separate from `displayName`, which is whatever Drawdown calls them: a
+     * real name is fine on an invoice and a poor thing to force onto a public
+     * message. Unique, and compared lowercased so `Trader` cannot be minted
+     * alongside `trader` to impersonate them.
+     */
+    username: text("username"),
+    jobTitle: text("job_title"),
+    /**
+     * Avatar as a small `data:` URL rather than a link or an upload.
+     *
+     * No object storage is configured, and adding a bucket to put a 6KB
+     * thumbnail somewhere would be the larger change. The image is resized and
+     * re-encoded to JPEG in the browser before it is ever sent, which caps the
+     * size and strips whatever the original was — including SVG, which can
+     * carry script, and EXIF, which can carry the member's home address.
+     * Validated again server-side; the browser is not the check.
+     */
+    avatar: text("avatar"),
+
+    /**
+     * The toggle. Distinct from having accepted the terms: acceptance is a
+     * fact that happened once, this is a switch the member can turn off again
+     * without it un-happening.
+     */
+    chatEnabled: boolean("chat_enabled").notNull().default(false),
+    onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   },
-  (t) => [uniqueIndex("users_external_idx").on(t.externalId)],
+  (t) => [
+    uniqueIndex("users_external_idx").on(t.externalId),
+    // Partial: many rows legitimately have no username yet, and NULLs must not
+    // collide with each other.
+    uniqueIndex("users_username_idx")
+      .on(sql`lower(${t.username})`)
+      .where(sql`${t.username} is not null`),
+  ],
 );
 
 /**

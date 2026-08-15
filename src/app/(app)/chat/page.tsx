@@ -3,12 +3,14 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/Page";
 import { Card } from "@/components/ui/Card";
 import { ChatRoom } from "@/components/chat/ChatRoom";
-import { ChatTerms } from "@/components/chat/ChatTerms";
+import { ChatWizard } from "@/components/chat/ChatWizard";
+import { ChatToggle } from "@/components/chat/ChatToggle";
 import { listRooms, readRoom, roomExists } from "@/lib/chat/rooms";
 import {
   CHAT_TERMS_VERSION,
+  canUseChat,
   currentUser,
-  hasAcceptedChatTerms,
+  hasCompletedChatOnboarding,
 } from "@/lib/identity/user";
 import { clsx } from "@/lib/clsx";
 
@@ -20,6 +22,13 @@ export const dynamic = "force-dynamic";
  * The first screen in this app that assumes more than one person exists.
  * Identity comes from drawdown.trading via /api/auth/sso; Peter's own password
  * login resolves to an ordinary user row, so there is no special case here.
+ *
+ * ── First visit is the wizard, and only the wizard ────────────────────────
+ * No rooms, no message list, nothing to skip to. Three documents have to be
+ * acknowledged and a profile chosen before this screen becomes a chat at all.
+ * A member who has been through it and then switched chat off sees the rooms
+ * read-only rather than the wizard again — acceptance already happened, and
+ * asking twice would imply otherwise.
  */
 export default async function ChatPage({
   searchParams,
@@ -29,6 +38,18 @@ export default async function ChatPage({
   const user = await currentUser();
   if (!user) redirect("/login?next=%2Fchat");
 
+  if (!hasCompletedChatOnboarding(user)) {
+    return (
+      <>
+        <PageHeader
+          title="Chat"
+          subtitle="A few things to read before you join."
+        />
+        <ChatWizard version={CHAT_TERMS_VERSION} fallbackName={user.displayName} />
+      </>
+    );
+  }
+
   const rooms = await listRooms();
   const { room: requested } = await searchParams;
 
@@ -36,20 +57,14 @@ export default async function ChatPage({
     requested && (await roomExists(requested)) ? requested : (rooms[0]?.slug ?? "floor");
 
   const messages = await readRoom(active);
-  const accepted = hasAcceptedChatTerms(user);
 
   return (
     <>
       <PageHeader
         title="Chat"
         subtitle="Rooms for members. Opinions here are not advice."
+        action={<ChatToggle enabled={user.chatEnabled} username={user.username ?? ""} />}
       />
-
-      {!accepted && (
-        <div className="mb-4">
-          <ChatTerms version={CHAT_TERMS_VERSION} />
-        </div>
-      )}
 
       <div className="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">
         <Card className="h-fit p-3">
@@ -82,11 +97,13 @@ export default async function ChatPage({
             key={active}
             room={active}
             me={user.id}
-            canPost={accepted}
+            canPost={canUseChat(user)}
             initialMessages={messages.map((m) => ({
               id: m.id,
               userId: m.userId,
               author: m.author,
+              jobTitle: m.jobTitle,
+              avatar: m.avatar,
               body: m.body,
               createdAt: m.createdAt.toISOString(),
               deleted: m.deleted,
