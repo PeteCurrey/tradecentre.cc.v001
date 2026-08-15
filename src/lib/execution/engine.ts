@@ -268,6 +268,9 @@ async function runBook(
     maxOpenPositions: state.maxOpenPositions,
     maxRiskMultiple: Number(state.maxRiskMultiple),
     enabledPatternIds: state.enabledPatternIds,
+    // The engine never places a manual order, so this permission is irrelevant
+    // to it and is stated false rather than left to a default.
+    manualTradingEnabled: false,
   };
 
   for (const instrument of state.instrumentAllowlist) {

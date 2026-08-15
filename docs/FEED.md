@@ -280,12 +280,40 @@ distinguished by origin, so the audit trail is one trail.
 
 ## 7. Build order
 
-1. `feed_items` table, ingest for the four sources, instrument resolution.
-2. `/wire` screen, filters, and the Today panel.
-3. Chart and Watch buttons.
-4. Manual guard chain + OANDA ticket.
+1. ✅ `feed_items` table, ingest for the four sources, instrument resolution.
+2. ✅ `/wire` screen, filters, and the Today panel.
+3. Chart and Watch buttons. **Chart is blocked on `/charts`** — see below.
+4. Manual guard chain ✅ + OANDA ticket.
 5. Alpaca client, execution, extended no-write test, shares ticket.
 
 Steps 1–3 are self-contained and change nothing about execution. Step 4 reuses a
 guarded path that already exists. Step 5 is the largest piece of genuinely new
 risk surface and is deliberately last.
+
+### 7.1 The manual chain (done)
+
+`approveManualOrder()` in `src/lib/execution/guards.ts`, with
+`manual-guards.test.ts` covering it. Two properties are worth knowing:
+
+- **One mint, two chains.** Both entry points funnel through a single private
+  `mint()`, so `no-write.test.ts`'s assertion that exactly one place can
+  construct a `GuardApproval` still holds, unweakened.
+- **The manual chain is built by SUBSTITUTION into the engine chain**, not
+  listed separately. A guard added to the engine therefore protects manual
+  orders automatically, and a test pins the resulting names so that adding one
+  is a deliberate decision rather than a silent gap. Listing the chains
+  independently would let them drift, and that mistake runs in the worst
+  possible direction.
+
+### 7.2 Coordination note — `/charts` is owned elsewhere
+
+Another session is building a TradingView `/charts` screen
+(`src/components/charts/ChartBoard.tsx`, `src/app/api/tv-search/`), and its page
+already accepts `?symbol=`, which is exactly the hook a feed **Chart** button
+would use.
+
+That button is therefore **not** built here, to avoid two sessions designing the
+same integration. When `/charts` lands, the Chart button becomes a link to
+`/charts?symbol=<resolved>` and needs a symbol mapping from OANDA instrument
+names to TradingView's (`XAU_USD` → `OANDA:XAUUSD`), which belongs with whoever
+owns the chart screen.

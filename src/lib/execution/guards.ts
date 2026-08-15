@@ -36,6 +36,14 @@ export type ExecutionConfig = {
   maxOpenPositions: number;
   maxRiskMultiple: number;
   enabledPatternIds: number[];
+  /**
+   * Whether Peter may place an order by hand. Separate from `state` on purpose:
+   * arming the autonomous engine and being allowed to click Buy are different
+   * permissions, and requiring the robot to be armed before you can place a
+   * manual trade would be a bizarre coupling. Deny by default, like everything
+   * else here.
+   */
+  manualTradingEnabled: boolean;
 };
 
 export type OrderIntent = {
@@ -50,6 +58,16 @@ export type OrderIntent = {
   targetPrice: number | null;
   entryPrice: number;
   patternId: number | null;
+  /**
+   * Why this order is being placed — required on MANUAL orders only, where it
+   * carries the feed item id or Peter's own words.
+   *
+   * Optional in the type because engine orders justify themselves with
+   * `patternId` instead. That is not a loophole: `reasonRequired` treats
+   * missing and empty identically and refuses both, so the manual chain still
+   * denies by default.
+   */
+  reason?: string | null;
 };
 
 export type AccountSnapshot = {
@@ -112,18 +130,55 @@ export type ApprovalResult =
   | { approved: true; approval: GuardApproval }
   | { approved: false; guard: string; reason: string };
 
-export function approveOrder(input: GuardInput): ApprovalResult {
-  const decision = checkOrder(input);
-  if (!decision.allowed) {
-    return { approved: false, guard: decision.guard, reason: decision.reason };
+/**
+ * The ONLY place an approval is constructed.
+ *
+ * Both entry points below funnel through here, which keeps the single-cast
+ * property that `no-write.test.ts` asserts: if minting were duplicated per
+ * chain, a future chain could be added that forgot to run its guards.
+ */
+function mint(intent: OrderIntent, now: Date): GuardApproval {
+  return { intent, approvedAt: now } as GuardApproval;
+}
+
+function runChain(guards: Guard[], input: GuardInput): ApprovalResult {
+  for (const guard of guards) {
+    const decision = guard(input);
+    if (!decision.allowed) {
+      return { approved: false, guard: decision.guard, reason: decision.reason };
+    }
   }
-  return {
-    approved: true,
-    approval: {
-      intent: input.intent,
-      approvedAt: input.now,
-    } as GuardApproval,
-  };
+  return { approved: true, approval: mint(input.intent, input.now) };
+}
+
+/** Autonomous engine orders. */
+export function approveOrder(input: GuardInput): ApprovalResult {
+  return runChain(GUARDS, input);
+}
+
+/**
+ * Orders Peter places by hand, from a ticket.
+ *
+ * Same protection, two substitutions — and only two:
+ *
+ *   `armed`          → `manualEnabled`. Placing a trade yourself must not
+ *                      require the robot to be running. They are separate
+ *                      permissions and this is the whole reason the manual
+ *                      chain exists rather than reusing the engine's.
+ *
+ *   `patternEnabled` → `reasonRequired`. That guard refuses any order with a
+ *                      null pattern, which is every manual trade. A reason
+ *                      takes its place, so a hand-placed order is still
+ *                      traceable to why it was placed — usually the feed item
+ *                      that prompted it.
+ *
+ * Everything else applies unchanged: live-capital unlock, daily loss limit,
+ * position cap, instrument allowlist, stop-required, the sizing ceiling, the
+ * rate limit and the duplicate check. Those are what make a mis-click on a
+ * headline survivable, so none of them is optional here.
+ */
+export function approveManualOrder(input: GuardInput): ApprovalResult {
+  return runChain(MANUAL_GUARDS, input);
 }
 
 type Guard = (input: GuardInput) => GuardDecision;
@@ -281,3 +336,52 @@ const GUARDS: Guard[] = [
 
 /** Guard names, in evaluation order — used by the UI and by tests. */
 export const GUARD_NAMES = GUARDS.map((g) => g.name);
+
+/* -------------------------------------------------------------------------- */
+/* The manual chain                                                            */
+/* -------------------------------------------------------------------------- */
+
+const manualEnabled: Guard = function manualEnabled({ config }) {
+  if (!config.manualTradingEnabled) {
+    return deny("manualEnabled", "Manual trading is not enabled for this book");
+  }
+  return allow;
+};
+
+const reasonRequired: Guard = function reasonRequired({ intent }) {
+  // Missing and blank are the same refusal: " " is not a reason.
+  if (!intent.reason || !intent.reason.trim()) {
+    return deny(
+      "reasonRequired",
+      "No reason recorded — a manual order must say what prompted it",
+    );
+  }
+  return allow;
+};
+
+/**
+ * Built by SUBSTITUTION into the engine chain, not by listing the manual one.
+ *
+ * The difference matters. Listed independently, the two chains drift: someone
+ * adds a protection to the engine and the manual path silently misses it, which
+ * is the worst possible direction for that mistake to run. Substituting means a
+ * new guard applies to hand-placed orders automatically, and a test pins the
+ * resulting names so adding one is a deliberate decision rather than a surprise.
+ */
+const MANUAL_SUBSTITUTIONS: Record<string, Guard> = {
+  armed: manualEnabled,
+  patternEnabled: reasonRequired,
+};
+
+const MANUAL_GUARDS: Guard[] = GUARDS.map((g) => MANUAL_SUBSTITUTIONS[g.name] ?? g);
+
+export const MANUAL_GUARD_NAMES = MANUAL_GUARDS.map((g) => g.name);
+
+/** Non-approving check, for showing a ticket its verdict before submission. */
+export function checkManualOrder(input: GuardInput): GuardDecision {
+  for (const guard of MANUAL_GUARDS) {
+    const decision = guard(input);
+    if (!decision.allowed) return decision;
+  }
+  return allow;
+}

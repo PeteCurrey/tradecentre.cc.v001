@@ -25,6 +25,7 @@ const CONFIG: ExecutionConfig = {
   maxOpenPositions: 2,
   maxRiskMultiple: 1.5,
   enabledPatternIds: [7],
+  manualTradingEnabled: false,
 };
 
 /** A valid long: entry 1.10, stop 1.09, 1000 units → risk 10 against a 11.25 ceiling. */
