@@ -109,6 +109,20 @@ export function describeSeries(ref: SeriesRef): string {
       return `${describeSeries(ref.a)} minus ${describeSeries(ref.b)}`;
     case "div":
       return `${describeSeries(ref.a)} divided by ${describeSeries(ref.b)}`;
+    case "max": {
+      // The inclusive-Donchian idiom reads badly spelled out literally, so name
+      // it for what it is.
+      if (ref.a.s === "priorHigh" && ref.b.s === "high") {
+        return `the highest high of the last ${ref.a.period + 1} bars`;
+      }
+      return `the greater of ${describeSeries(ref.a)} and ${describeSeries(ref.b)}`;
+    }
+    case "min": {
+      if (ref.a.s === "priorLow" && ref.b.s === "low") {
+        return `the lowest low of the last ${ref.a.period + 1} bars`;
+      }
+      return `the lesser of ${describeSeries(ref.a)} and ${describeSeries(ref.b)}`;
+    }
   }
 }
 

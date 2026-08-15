@@ -213,6 +213,19 @@ export class BarContext {
         return out;
       }
 
+      case "max":
+      case "min": {
+        const a = this.series(ref.a);
+        const bb = this.series(ref.b);
+        const out = nan(this.n);
+        for (let i = 0; i < this.n; i++) {
+          // NaN propagates rather than being treated as -Infinity, so an
+          // indicator that has not warmed up cannot silently win a max().
+          if (Number.isNaN(a[i]) || Number.isNaN(bb[i])) continue;
+          out[i] = ref.s === "max" ? Math.max(a[i], bb[i]) : Math.min(a[i], bb[i]);
+        }
+        return out;
+      }
       case "add":
       case "sub":
       case "mul":

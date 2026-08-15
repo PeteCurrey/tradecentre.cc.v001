@@ -103,7 +103,7 @@ export type BacktestTrade = {
   target: number | null;
   /** Result in R, net of costs. */
   r: number;
-  reason: "stop" | "target" | "time" | "flatten" | "end-of-data";
+  reason: "stop" | "target" | "time" | "flatten" | "signal" | "end-of-data";
   barsHeld: number;
   maeR: number;
   mfeR: number;
@@ -155,6 +155,9 @@ export function backtest(
 
   const ctx = new BarContext(bars);
   const fired = ctx.evaluate(pattern.trigger);
+  // Precomputed once for the whole series, like the trigger — evaluating it
+  // per-open-position would recompute the same indicators for every trade.
+  const exitFired = pattern.exitRule ? ctx.evaluate(pattern.exitRule) : null;
   const long = pattern.direction === "long";
 
   const trades: BacktestTrade[] = [];
@@ -168,7 +171,7 @@ export function backtest(
     // signal and flatter the results.
     if (i < blockedUntil) continue;
 
-    const t = simulate(pattern, ctx, bars, i, long, costs);
+    const t = simulate(pattern, ctx, bars, i, long, costs, exitFired);
     if (t) {
       trades.push(t);
       blockedUntil = t.exitIndex;
@@ -256,6 +259,7 @@ function simulate(
   signalIndex: number,
   long: boolean,
   costs: Costs,
+  exitFired: boolean[] | null,
 ): BacktestTrade | null {
   const entryIndex = signalIndex + 1; // next bar's open — never the signal bar
   if (entryIndex >= bars.length) return null;
@@ -302,6 +306,14 @@ function simulate(
     }
     if (targetHit) {
       return close(i, target!, "target");
+    }
+
+    // Signal exit, evaluated on the CLOSE — so it is checked after the intrabar
+    // stop and target, which could only have happened earlier in the same bar.
+    // Filling at this bar's close is the honest read: the condition is not
+    // knowable until the bar completes.
+    if (exitFired?.[i]) {
+      return close(i, long ? bar.c - half : bar.c + half, "signal");
     }
 
     // Move to breakeven once far enough in profit.

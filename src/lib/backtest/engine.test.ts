@@ -88,6 +88,82 @@ describe("stop-versus-target ambiguity", () => {
   });
 });
 
+describe("signal exit", () => {
+  // Exits when close drops below 95. Target is far away so it never interferes.
+  const withExit = () =>
+    pattern({
+      targets: [{ kind: "rMultiple", r: 50 }],
+      exitRule: C.lt(S.close, S.n(95)),
+    });
+
+  it("closes at the bar's CLOSE when the exit condition fires", () => {
+    const b = bars([
+      [100, 100, 100, 101], // signal
+      [100, 101, 99, 100], // entry at 100
+      [100, 101, 94, 94], // closes below 95 → exit here, at 94
+      [94, 95, 93, 94],
+    ]);
+    const r = backtest(withExit(), b, "EUR_USD", { costs: NO_COSTS });
+    assert.equal(r.trades.length, 1);
+    assert.equal(r.trades[0].reason, "signal");
+    assert.equal(r.trades[0].exitPrice, 94, "fills at the close, not the low");
+    assert.equal(r.trades[0].exitIndex, 2);
+  });
+
+  it("does not fire while the condition is false", () => {
+    const b = bars([
+      [100, 100, 100, 101],
+      [100, 101, 99, 100],
+      [100, 101, 96, 99], // dips to 96 but closes 99 — no exit
+      [99, 100, 98, 99],
+    ]);
+    const r = backtest(withExit(), b, "EUR_USD", { costs: NO_COSTS });
+    assert.equal(r.trades[0].reason, "end-of-data");
+  });
+
+  it("lets the STOP win when both would trigger on the same bar", () => {
+    // Stop is 90. A bar that trades to 85 and closes at 88 satisfies the exit
+    // rule too, but the stop was hit intrabar and must take precedence.
+    const b = bars([
+      [100, 100, 100, 101],
+      [100, 101, 99, 100],
+      [100, 100, 85, 88],
+      [88, 89, 87, 88],
+    ]);
+    const r = backtest(withExit(), b, "EUR_USD", { costs: NO_COSTS });
+    assert.equal(r.trades[0].reason, "stop");
+    assert.equal(r.trades[0].r, -1);
+  });
+
+  it("charges the spread on a signal exit", () => {
+    const b = bars([
+      [100, 100, 100, 101],
+      [100, 101, 99, 100],
+      [100, 101, 94, 94],
+      [94, 95, 93, 94],
+    ]);
+    const r = backtest(withExit(), b, "EUR_USD", {
+      costs: { spread: 2, slippage: 0 },
+    });
+    // Entry 100 + 1 (half spread), exit 94 − 1.
+    assert.equal(r.trades[0].entryPrice, 101);
+    assert.equal(r.trades[0].exitPrice, 93);
+  });
+
+  it("is inert for patterns that declare no exitRule", () => {
+    const b = bars([
+      [100, 100, 100, 101],
+      [100, 101, 99, 100],
+      [100, 101, 94, 94],
+      [94, 95, 93, 94],
+    ]);
+    const r = backtest(pattern({ targets: [{ kind: "rMultiple", r: 50 }] }), b, "EUR_USD", {
+      costs: NO_COSTS,
+    });
+    assert.notEqual(r.trades[0].reason, "signal");
+  });
+});
+
 describe("costs", () => {
   it("charges half the spread on entry and worsens the fill", () => {
     const b = bars([

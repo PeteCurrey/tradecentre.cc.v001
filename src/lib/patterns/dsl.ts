@@ -44,6 +44,15 @@ export type SeriesRef =
   | { s: "vwap"; anchor: "session" | "day" }
   /** Arithmetic, so "0.5 × ATR(14)" is expressible. */
   | { s: "add" | "sub" | "mul" | "div"; a: SeriesRef; b: SeriesRef }
+  /**
+   * Pairwise max/min of two series.
+   *
+   * Needed because `priorHigh(n)` deliberately EXCLUDES the current bar, while
+   * Pine's `ta.highest(high, n)` includes it. The inclusive form is
+   * `max(priorHigh(n-1), high)`, so without this a Donchian channel — the
+   * canonical trend-following construct — cannot be translated faithfully.
+   */
+  | { s: "max" | "min"; a: SeriesRef; b: SeriesRef }
   | { s: "abs"; a: SeriesRef }
   /** Shift a series back N bars. */
   | { s: "offset"; a: SeriesRef; bars: number };
@@ -143,6 +152,25 @@ export type PatternDef = {
   invalidation: string;
   invalidationRule?: Condition;
 
+  /**
+   * Close an OPEN position when this holds on a bar's close.
+   *
+   * Distinct from `invalidationRule`, which kills a setup before entry. This is
+   * an exit for a live position, and it exists because a large family of
+   * published strategies — most trend-following, every stop-and-reverse system
+   * — has no protective stop at all and exits purely on a signal. Without this
+   * the DSL cannot express them, and translating one by bolting on a stop would
+   * be testing a different strategy (decision #69).
+   *
+   * `stop` remains REQUIRED even when a pattern uses this, because R is defined
+   * by risk at entry and every figure in this app is denominated in R. For a
+   * strategy with no stop of its own, use a deliberately wide ATR stop as a
+   * disaster stop and CHECK HOW OFTEN IT BINDS — `Stats.exits.stop` against
+   * `exits.signal`. If it binds often it is not a disaster stop, it is a
+   * material change to the strategy, and the translation should be rejected.
+   */
+  exitRule?: Condition;
+
   stop: StopRule;
   targets: TargetRule[];
   management?: ManagementRule;
@@ -205,6 +233,20 @@ export const S = {
   add: (a: SeriesRef, b: SeriesRef): SeriesRef => ({ s: "add", a, b }),
   sub: (a: SeriesRef, b: SeriesRef): SeriesRef => ({ s: "sub", a, b }),
   div: (a: SeriesRef, b: SeriesRef): SeriesRef => ({ s: "div", a, b }),
+  max: (a: SeriesRef, b: SeriesRef): SeriesRef => ({ s: "max", a, b }),
+  min: (a: SeriesRef, b: SeriesRef): SeriesRef => ({ s: "min", a, b }),
+  /** Pine's `ta.highest(high, n)` — inclusive of the current bar. */
+  highestHigh: (period: number): SeriesRef => ({
+    s: "max",
+    a: { s: "priorHigh", period: period - 1 },
+    b: { s: "high" },
+  }),
+  /** Pine's `ta.lowest(low, n)` — inclusive of the current bar. */
+  lowestLow: (period: number): SeriesRef => ({
+    s: "min",
+    a: { s: "priorLow", period: period - 1 },
+    b: { s: "low" },
+  }),
   abs: (a: SeriesRef): SeriesRef => ({ s: "abs", a }),
   ago: (a: SeriesRef, bars: number): SeriesRef => ({ s: "offset", a, bars }),
 };

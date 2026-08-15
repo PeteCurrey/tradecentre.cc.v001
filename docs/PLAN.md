@@ -761,9 +761,176 @@ screen's job is to stop numbers like +34.6R reaching live capital, and it did.
 
 Running tally: **121 candidates measured, zero edges.**
 
+### Harvest — first corpus, and what it is actually made of
+
+MCP installed to `~/.local/share/tradingview-mcp`, registered via project-scoped `.mcp.json`.
+Its own suite passes (60 tests) and the stdio handshake was verified before use. First harvest used
+**93 of the 2,000 daily requests**: 120 scripts, **85 with Pine source**.
+
+**Editors' picks is a shallow well.** Only 23 strategies exist in it, and most are not strategies:
+educational examples ("Stop loss and Take Profit in $$ example"), frameworks ("Ultimate Strategy
+Template"), tooling ("Trading Report Generator from CSV"), and a martingale published to
+demonstrate that martingales blow up. Perhaps six are testable. Topic search is the better source,
+but yields vary wildly — breakout 60, trend following 13, mean reversion 10, swing trading 4.
+
+**What the corpus contains** (85 with source):
+
+| Timeframe | n | | Asset class | n |
+|---|---|---|---|---|
+| H1 (60) | 17 | | crypto | 33 |
+| M15 (15) | 17 | | equity/other | 26 |
+| D | 15 | | India/IDX | 11 |
+| M5 | 11 | | **FX** | **8** |
+| H4 (240) | 7 | | futures | 7 |
+
+Two things follow. Crypto dominates at 39%, and only 8 of 85 were published on FX — the chart an
+author chose does not bind where a strategy can be tested, but it lowers the prior. And 28 of 85
+sit on M5/M15, the horizons already 0-for-30 here.
+
+**Translatability, measured rather than assumed:**
+
+| Blocker | Scripts |
+|---|---|
+| `request.security` (multi-timeframe) | 18 |
+| pyramiding / multi-entry | 15 |
+| arrays / matrices | 11 |
+| `ta.supertrend` | 2 |
+| `ta.linreg` / correlation | 1 |
+| **No blocker detected** | **44** |
+
+`PatternDef` is single-timeframe and one-position-at-a-time, so `request.security` and pyramiding
+are hard exclusions — per decision #69 these are *rejected, not approximated*. Note that "no
+blocker" is a necessary condition, not a sufficient one: several of the 44 use no recognisable
+`ta.*` primitives at all, meaning bespoke logic that still may not map.
+
+**Best candidates on Peter's timeframes**, no blockers, recognisable primitives:
+
+| Likes | TF | Name |
+|---|---|---|
+| 5,170 | H4 | Price and Volume Breakout Buy Strategy [TradeDots] |
+| 519 | H4 | RSI Mean Reversion |
+| 436 | D | ETF 3-Day Reversion Strategy |
+| 1,049 | M15 | EMA Cross + RSI + ADX — Autotrade Strategy V2 |
+| 657 | M15 | Bollinger Bands Mean Reversion using RSI |
+
+The corpus is a reference cache (#67): SQLite at the install path, outside the repo, disposable.
+
+### First translations — one rejected, one screened
+
+**Both H4 candidates turned out to be stop-less signal-exit systems**, which the DSL could not
+express at all. `PatternDef` had no way to close a position on a condition, so an entire family —
+most trend-following, every stop-and-reverse system — was inexpressible. That is a gap in this
+platform, not in those scripts.
+
+**New: `exitRule?: Condition`.** Closes an open position when the condition holds on a bar's close.
+Checked *after* the intrabar stop and target, since a close-based signal cannot pre-empt something
+that already happened during the bar. `stop` stays required, because R is defined by risk at entry
+and every figure here is denominated in R. Five engine tests cover it, including stop-wins-ties.
+
+**REJECTED — Price and Volume Breakout [TradeDots]** (5,170 likes, the most popular H4 candidate).
+Two independent grounds, either sufficient:
+1. Its `volume > ta.highest(volume, 60)[1]` filter has no DSL equivalent, and dropping it would
+   leave a plain breakout wearing the original's name — forbidden by #69.
+2. More fundamentally, **OANDA's candle volume is tick count, not traded volume**. The strategy's
+   central claim is that volume confirms a breakout; on FX and CFDs that claim cannot be tested at
+   all. Extending the DSL would fix (1) and not (2), so it would not make this testable here.
+
+**TRANSLATED — RSI Mean Reversion** (kparicharak92615, MPL-2.0), split long/short since PatternDef
+carries one direction. Golden tests recompute RSI(3) independently and assert the trigger fires on
+exactly the bars `ta.crossover` would, and that each side's exit is the other side's entry.
+
+*Declared deviation:* a 10×ATR disaster stop, absent from the original, added only because R needs
+risk at entry. **Fidelity verified rather than assumed: the stop took 0.9% of 38,188 exits.** Had
+it been materially higher the translation would have been rejected as a different strategy.
+
+### Result: 20 candidates on 20.6 years of H4 — **0 passed**
+
+| | |
+|---|---|
+| Best | SPX500 long: 1,991 trades, **+19.6R**, avg 0.0099R, 5/6 windows, p=0.022, **q=0.448** |
+| Worst | XAG short: **−64.7R**, 0/6 windows |
+| Shape | 5 of 20 positive; every short on an index deeply negative |
+
+Average R is ~0.01 or below across ~2,000 trades per candidate. That is the signature of a
+**cost-dominated** strategy: RSI(3) is extremely fast, and at two thousand round trips the spread
+is the whole story. Win rates of 55–60% on the longs do not rescue it — no target means small wins
+and occasional large losses.
+
+The long/short asymmetry is worth noting: longs beat shorts nearly everywhere on indices, which is
+equity drift showing up as an apparent edge rather than anything the strategy found.
+
+Running tally: **141 candidates measured, zero edges.**
+
+### Low-frequency harvest — and the first thing to pass the gate
+
+Corpus extended to **206 scripts / 143 sources** (351 of 2,000 daily requests). The search was
+deliberately biased toward daily bars and few trades, on the evidence that everything failing so far
+has been high-frequency and dying on spread.
+
+Two more translations, plus one more DSL addition:
+
+**New: `max` / `min` series operators.** `priorHigh(n)` deliberately excludes the current bar, while
+Pine's `ta.highest(high, n)` includes it. The inclusive form is `max(priorHigh(n-1), high)`, so
+without a pairwise max a **Donchian channel could not be expressed at all**. The absence of max/min
+alongside add/sub/mul/div was arbitrary. `S.highestHigh(n)` / `S.lowestLow(n)` wrap the idiom, and
+`describe.ts` renders them as "the highest high of the last n bars" rather than spelling out the
+arithmetic. The exhaustive switch in `describe.ts` caught the omission at compile time.
+
+- **Donchian Channel Strategy Idea** (QuantCT, D) — break the 10-bar extreme, exit through the
+  midline. The off-by-one is the whole point: entry uses the *exclusive* prior extreme, the midline
+  the *inclusive* current one, and on an entry bar (a new 10-bar high by definition) that difference
+  moves the exit threshold. Approximating it would have been wrong on exactly the bars that matter.
+- **8 Day Run** (Marcn5_, D, credits Linda Raschke) — after eight closes above the 5-SMA, buy the
+  first close back to it. `barssince(...) >= 8` offset by one bar became eight explicit offset
+  comparisons, because the DSL offsets series but not conditions. Verbose, but exact.
+
+A golden-test guard earned its place here: the "actually produces signals" assertion caught the
+8-Day-Run fidelity test passing **vacuously**, because the oscillating fixture flipped every five
+bars and could never produce an eight-bar run. Both sides agreed on zero signals and the test was
+meaningless until the fixture was replaced.
+
+### ⚠️ `8 Day Run` on XAU passed — and should still not be traded
+
+30 daily candidates screened over 20.6 years. Disaster stops took **0.1% of 4,613 exits**, so the
+translations are faithful. One passed:
+
+| | |
+|---|---|
+| `tv-8day-run` XAU_USD | 107 trades, **+3.88R**, avg 0.0363R, win 76%, 4/6 windows, **q=0.003** |
+
+The first pass in **171 candidates**. It was then subjected to a control the gate cannot perform.
+
+**The drift control.** This is a long-only strategy on an asset that went from ~$500 to ~$4,380
+across the sample. The gate's bootstrap asks "is this different from zero"; it cannot ask "is this
+different from simply being long gold". So: 5,000 runs of 107 random long entries on the same
+instrument, matched for holding-period distribution, identical costs and R normalisation.
+
+```
+random long entries   mean 0.0090R   (95th pct 0.0325)
+strategy              0.0363R        p = 0.032
+```
+
+It beats random longs, but **a quarter of its return is just gold's drift**, and p=0.032 is
+suggestive rather than decisive.
+
+**The decisive objection is economic, not statistical.** +3.88R over **twenty years and seven
+months** is 0.19R per year — at 1% risk, roughly 0.19% annually, from about five trades a year.
+That is indistinguishable from nothing once any unmodelled slippage, financing or execution
+friction is included. It is statistically real and practically worthless.
+
+**This exposes a genuine gap in the gate:** every criterion is statistical (trade count,
+consistency, FDR). Nothing asks whether a survivor is *worth trading*. A minimum economic threshold
+belongs in `GateCriteria` — but the number is Peter's business decision, not a statistical one, and
+choosing it now, immediately after seeing which candidate it would exclude, would be exactly the
+post-hoc threshold-fitting this whole apparatus exists to prevent. It should be set before the next
+screen, not after this one.
+
+Running tally: **171 candidates, one statistical pass, zero worth trading.**
+
 ### Still to build
 
-1. Harvest → supervised Pine translation → screening.
+1. An economic-significance criterion in the gate — threshold to be set by Peter, in advance.
+2. Further translations from the shortlist.
 2. English → `PatternDef` compiler with `describe.ts` read-back.
 3. Supabase migration, as its own piece of work, before any further backfill.
 
@@ -909,3 +1076,14 @@ Every decision below was made by Peter across 14 AskUserQuestion rounds.
 | 84 | **Supersedes #58:** database moved to Supabase (8 GB) — Railway's 500 MB volume could not absorb a 3 MB write | 8e |
 | 85 | `DATABASE_PUBLIC_URL` removed entirely — a stale fallback silently connects to the wrong database | 8e |
 | 86 | `swing-bos-retest` XAU **failed** pre-registered OOS: 0.132R → 0.012R, p 0.007 → 0.343. Selection, not edge | 8e |
+| 87 | Deep history: D/H4/H1 from 2006 (20.6y), M15 from 2019 — **3.38M bars**, ~3× the windows for the gate | 8e |
+| 88 | TradingView MCP registered via project `.mcp.json`, not the global config | 8e |
+| 89 | Editors' picks is mostly tutorials and frameworks — topic search is the real source | 8e |
+| 90 | 44 of 85 harvested scripts are translation candidates; MTF and pyramiding are hard exclusions | 8e |
+| 91 | **`exitRule` added to the DSL** — condition-based exits, without which stop-less strategies were inexpressible | 8e |
+| 92 | A disaster stop added for R must be *measured* (<1% of exits) or the translation is rejected | 8e |
+| 93 | Volume-based strategies are untestable on OANDA — candle volume is tick count (rejects TradeDots breakout) | 8e |
+| 94 | **`max`/`min` added to the DSL** — without them a Donchian channel is inexpressible | 8e |
+| 95 | Long-only survivors must be controlled against random entries on the same asset, not just against zero | 8e |
+| 96 | The gate has **no economic-significance criterion** — a statistical pass can still be worthless | 8e |
+| 97 | That threshold must be set **before** the next screen, never after seeing what it would exclude | 8e |
