@@ -35,6 +35,12 @@ export type FeedItem = {
   headline: string;
   summary: string | null;
   url: string | null;
+  /**
+   * Lead image, or null. Required rather than optional so a new provider has
+   * to state which it is — silently omitting artwork the source published is
+   * as much a decision as showing it.
+   */
+  imageUrl: string | null;
   tickers: string[];
   instruments: string[];
   importance: number | null;
@@ -46,6 +52,24 @@ export type FetchOutcome = {
 };
 
 const TIMEOUT_MS = 15_000;
+
+/**
+ * Accept an image URL only if it is https, else null.
+ *
+ * The dashboard is served over https, so a http image is blocked as mixed
+ * content and renders as a broken box — worse than no image, because it reads
+ * as the app being broken rather than the story having no artwork. Parsing
+ * also discards `javascript:` and `data:` payloads, since these strings come
+ * from third parties and end up in a src attribute.
+ */
+function httpsOnly(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    return new URL(raw).protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * SEC requires a User-Agent identifying the requester, and blocks generic ones.
@@ -167,6 +191,7 @@ export async function fetchPolygonNews(limit = 50): Promise<FetchOutcome> {
         title: string;
         description?: string;
         article_url?: string;
+        image_url?: string;
         published_utc: string;
         tickers?: string[];
       }>;
@@ -188,6 +213,7 @@ export async function fetchPolygonNews(limit = 50): Promise<FetchOutcome> {
         headline: r.title,
         summary: r.description ?? null,
         url: r.article_url ?? null,
+        imageUrl: httpsOnly(r.image_url),
         tickers,
         instruments: res.instruments,
         importance: res.importance,
@@ -215,6 +241,7 @@ export async function fetchFinnhubNews(): Promise<FetchOutcome> {
       headline: string;
       summary?: string;
       url?: string;
+      image?: string;
       datetime: number;
       related?: string;
     }>;
@@ -238,6 +265,7 @@ export async function fetchFinnhubNews(): Promise<FetchOutcome> {
         headline: r.headline,
         summary: r.summary ?? null,
         url: r.url ?? null,
+        imageUrl: httpsOnly(r.image),
         tickers,
         instruments: res.instruments,
         importance: res.importance,
@@ -306,6 +334,8 @@ export async function fetchFedReleases(): Promise<FetchOutcome> {
         headline: e.title,
         summary: e.summary || null,
         url: e.link || null,
+        // Fed RSS carries no artwork.
+        imageUrl: null,
         tickers: [],
         instruments: res.instruments,
         importance: fedImportance(text),
@@ -403,6 +433,8 @@ export async function fetchSecFilings(perForm = 20): Promise<FetchOutcome> {
           headline: `${form.label}: ${company}`,
           summary: e.title,
           url: e.link || null,
+          // EDGAR serves documents, not artwork.
+          imageUrl: null,
           tickers: [],
           instruments: res.instruments,
           importance: form.importance,

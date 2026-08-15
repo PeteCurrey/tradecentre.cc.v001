@@ -76,6 +76,7 @@ export async function GET(request: Request) {
     sources: list(url.searchParams.get("sources")),
     categories: list(url.searchParams.get("categories")),
     instruments: list(url.searchParams.get("instruments")),
+    relevantOnly: url.searchParams.get("relevant") === "1",
   });
 
   const [{ newest } = { newest: null }] = await db

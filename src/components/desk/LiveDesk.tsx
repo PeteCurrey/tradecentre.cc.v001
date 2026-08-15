@@ -358,9 +358,16 @@ export function LiveDesk({
 
         <div className="flex flex-col gap-4">
           <LivePrices />
-          {wire}
         </div>
       </div>
+
+      {/* The wire runs full width BELOW the account and positions, not beside
+          them. What you own still comes first on this screen — the earlier
+          column placement was chosen to protect that — but at column width the
+          headlines wrapped to three lines each and the artwork had nowhere to
+          go. Full width buys a scannable line length; keeping it last preserves
+          the ordering that mattered. */}
+      {wire && <div className="mt-4">{wire}</div>}
     </>
   );
 }

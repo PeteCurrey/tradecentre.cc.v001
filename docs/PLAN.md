@@ -927,19 +927,37 @@ screen, not after this one.
 
 Running tally: **171 candidates, one statistical pass, zero worth trading.**
 
+### 🔴 BLOCKER as of 15 Aug 2026 — the database is unreachable
+
+`DATABASE_URL` points at Supabase's **direct** host, `db.<ref>.supabase.co`, which is **IPv6-only**
+without the IPv4 add-on. It connected on 13 Aug because this machine had IPv6 that day. It no longer
+does, so DNS returns no A record and Node fails with `ENOTFOUND`.
+
+The project is fine — the AAAA record still resolves to the same address. The connection string is
+wrong for a world without guaranteed IPv6.
+
+**Fix: switch to the session pooler**, which is IPv4 and was the original recommendation (#84 notes
+the direct host was used instead). From Supabase → Connect → Session pooler:
+
+```
+postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+```
+
+Session mode (5432), not transaction mode (6543): this is a long-running Next server, and session
+mode keeps prepared statements working. `src/lib/db/index.ts` already disables them automatically on
+6543 if that is ever used. The same string goes in `.env.local` and in Railway's env.
+
 ### Still to build
 
-1. An economic-significance criterion in the gate — threshold to be set by Peter, in advance.
-2. Further translations from the shortlist.
-2. English → `PatternDef` compiler with `describe.ts` read-back.
-3. Supabase migration, as its own piece of work, before any further backfill.
+1. **Economic-significance criterion** in `GateCriteria` — threshold set by Peter, *in advance*
+   (#96, #97). Nothing currently stops the gate passing a strategy worth 0.19R a year.
+2. **English → `PatternDef` compiler**, with `describe.ts` read-back for confirmation (#72).
+3. Further translations from the ~42 remaining shortlist candidates.
+4. **Promotion path** — incubating → demo book → Peter approves → live. Only worth building if
+   something ever survives both the gate and an economic threshold.
+5. M5 backfill (deferred, #79) and equities via a second data source (deferred, #75).
 
-**Sequencing decision:** harvest first, Supabase second. The corpus is local SQLite and translated
-patterns are a few KB of JSON, so harvesting needs no Postgres headroom — it screens against the
-D/H4/H1 history already stored, which is the granularity most published strategies use. Supabase
-becomes urgent only when M5 or a wider universe is wanted.
-
-Scalp remains 0-for-10 out-of-sample (§8d), intraday is now 0-for-20, and M5 stays unmeasured —
+Scalp remains 0-for-10 out-of-sample (§8d), intraday is 0-for-20, and M5 stays unmeasured —
 deliberately, since it is the most expensive horizon to store and the least supported by evidence.
 
 ---

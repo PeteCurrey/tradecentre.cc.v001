@@ -74,6 +74,8 @@ async function projectMacro(now: Date): Promise<FeedItem[]> {
         headline: e.title,
         summary: e.country ? `Scheduled release · ${e.country}` : "Scheduled release",
         url: null,
+        // A calendar entry is our own row, not a published story.
+        imageUrl: null,
         tickers: [],
         instruments: res.instruments,
         importance: e.importance,
@@ -167,6 +169,7 @@ export async function ingestFeed(): Promise<IngestResult> {
         headline: item.headline,
         summary: item.summary,
         url: item.url,
+        imageUrl: item.imageUrl,
         tickers: item.tickers,
         instruments: item.instruments,
         importance: item.importance,
@@ -180,6 +183,7 @@ export async function ingestFeed(): Promise<IngestResult> {
           // that it does not reshuffle.
           headline: item.headline,
           summary: item.summary,
+          imageUrl: item.imageUrl,
           tickers: item.tickers,
           instruments: item.instruments,
           importance: item.importance,
@@ -212,6 +216,22 @@ export type FeedQuery = {
   categories?: string[];
   /** Narrow to items touching any of these OANDA instruments. */
   instruments?: string[];
+  /**
+   * Only items that resolve to an instrument, or that are central-bank or
+   * economic. The Today panel's default.
+   *
+   * Measured on a live pull of all four sources: of 213 items, 122 carried
+   * neither a tag nor an importance, and the newest 40 contained just 4 tagged
+   * items and none at top importance — twenty were SEC insider filings and
+   * seventeen were retail equity commentary. Strict chronology on that mix
+   * gives a panel that is ~90% irrelevant to an FX, indices and commodities
+   * book, with the Fed and macro items pushed below the fold by age alone.
+   *
+   * This is a FILTER, not a ranking: it changes what is shown, never the
+   * order, and `/wire` remains complete. That distinction is the whole reason
+   * the feed can be trusted — see the ordering contract in Wire.tsx.
+   */
+  relevantOnly?: boolean;
 };
 
 /**
@@ -233,6 +253,12 @@ export async function readFeed(q: FeedQuery = {}) {
   if (q.instruments?.length) {
     // Array overlap: the item touches at least one instrument asked for.
     conditions.push(sql`${feedItems.instruments} && ${q.instruments}`);
+  }
+  if (q.relevantOnly) {
+    conditions.push(
+      sql`(cardinality(${feedItems.instruments}) > 0
+           or ${feedItems.category} in ('central_bank', 'economic'))`,
+    );
   }
 
   return db

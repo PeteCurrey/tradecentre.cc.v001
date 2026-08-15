@@ -123,12 +123,17 @@ Indexed on `published_at desc`. Retention: 30 days, pruned on ingest.
 
 ### 4.4 Liveness
 
-Polling on the server, pushed to the browser. There is already a broadcast
-mechanism in `src/lib/desk/broadcast.ts` and a `src/lib/stream/` module for the
-live P&L — the feed reuses it rather than inventing a second transport.
+**Revised during build.** The original plan was to reuse the SSE hub in
+`src/lib/stream/`. On reading it, that is a price-tick hub bound to the OANDA
+streaming connection's lifecycle — so routing news through it would mean the
+feed dies whenever the broker socket is down, including all weekend, which is
+precisely when there is time to read.
 
-Poll cadences, chosen against each provider's actual update rate and rate limit:
-news 60s, SEC 120s, Fed 300s, macro projection 60s.
+The wire therefore polls `/api/feed` on a 60s interval. Ingest is triggered by a
+staleness check on the first request after the data ages out, so there is no
+cron to deploy and no work done while nobody is watching. The refresh is
+fire-and-forget: SEC alone takes ~10s and a feed that stalls for ten seconds is
+worse than one a minute behind.
 
 ### 4.5 Ordering and relevance
 
@@ -145,6 +150,35 @@ Newest first, always. What varies is **filtering**, never order:
 
 The reason to refuse ranking: a feed that reorders itself is a feed you cannot
 trust to have shown you something. Chronological means absence is meaningful.
+
+### 4.6 What the Today panel defaults to
+
+> **Decision:** tagged, central-bank and economic items only.
+
+Measured on a live pull of all four sources during the build: **213 items, of
+which 122 carried neither an instrument tag nor an importance**, and only 26
+resolved to an instrument at all. In the **newest 40** — exactly what the panel
+shows — there were **4 tagged items and none at top importance**; twenty were
+SEC insider filings and seventeen were retail equity commentary.
+
+Unfiltered, the panel is therefore ~90% irrelevant to an FX, indices and
+commodities book, with the Fed and macro items pushed below the fold by age
+alone. So the panel filters to items that resolve to an instrument or are
+central-bank / economic.
+
+This is a **filter, not a ranking** — order remains strictly newest-first and
+`/wire` stays complete. The header states the filter and links to the full wire,
+because a quiet column must never be mistaken for a quiet market.
+
+Two related decisions taken at the same time:
+
+- **SEC Form 4 stays**, in the store and on `/wire` behind the Filings filter,
+  out of the panel. Insider buying on a stock you hold is worth having when you
+  go looking for it.
+- **Retail commentary is not keyword-suppressed.** Filtering "Should You Buy…"
+  headlines means encoding an editorial judgment that will sometimes drop
+  something real, and a feed that silently discards stories is one you stop
+  trusting. The panel default already solves the visibility problem.
 
 The colour rule holds throughout — accent orange for live/new/selected state,
 `--color-warn` for importance. **No green or red anywhere in the feed**, because

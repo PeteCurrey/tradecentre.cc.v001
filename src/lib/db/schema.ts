@@ -503,6 +503,14 @@ export const feedItems = pgTable(
     headline: text("headline").notNull(),
     summary: text("summary"),
     url: text("url"),
+    /**
+     * Lead image as the provider gave it. Null is the common case, not an
+     * error — SEC filings and Fed releases have no artwork, and the row is
+     * laid out so an absent image reads as deliberate rather than broken. We
+     * never substitute a stock photo: an illustration the publisher did not
+     * choose is fabricated context on a story you may trade against.
+     */
+    imageUrl: text("image_url"),
     /** Equity symbols exactly as the provider gave them — Alpaca's universe. */
     tickers: text("tickers").array().notNull().default([]),
     /** Resolved to OANDA instrument names. See lib/feed/resolve.ts for the rules. */

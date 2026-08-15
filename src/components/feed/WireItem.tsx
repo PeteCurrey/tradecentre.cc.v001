@@ -25,6 +25,7 @@ export type WireRow = {
   headline: string;
   summary: string | null;
   url: string | null;
+  imageUrl: string | null;
   tickers: string[];
   instruments: string[];
   importance: number | null;
@@ -79,51 +80,82 @@ export function WireItem({
   const high = item.importance === 3;
 
   const body = (
-    <>
-      <div className="flex items-baseline gap-2">
-        <span
-          className="shrink-0 tabular-nums text-[11px] text-[var(--color-ink-mute)]"
-          title={published.toLocaleString("en-GB", { timeZone: "Europe/London" })}
-        >
-          {age(published, now)}
-        </span>
-        <span
-          className={clsx(
-            "min-w-0 text-[13px] leading-snug",
-            high ? "font-semibold text-[var(--color-ink)]" : "text-[var(--color-ink-dim)]",
+    <div className="flex items-start gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span
+            className="shrink-0 tabular-nums text-[11px] text-[var(--color-ink-mute)]"
+            title={published.toLocaleString("en-GB", { timeZone: "Europe/London" })}
+          >
+            {age(published, now)}
+          </span>
+          <span
+            className={clsx(
+              "min-w-0 text-[13px] leading-snug",
+              high ? "font-semibold text-[var(--color-ink)]" : "text-[var(--color-ink-dim)]",
+            )}
+          >
+            {item.headline}
+          </span>
+          {item.url && !compact && (
+            <ExternalLink className="mt-0.5 size-3 shrink-0 text-[var(--color-ink-faint)]" />
           )}
-        >
-          {item.headline}
-        </span>
-        {item.url && !compact && (
-          <ExternalLink className="mt-0.5 size-3 shrink-0 text-[var(--color-ink-faint)]" />
+        </div>
+
+        {!compact && item.summary && (
+          <p className="mt-1 line-clamp-2 pl-8 text-xs text-[var(--color-ink-mute)]">
+            {item.summary}
+          </p>
+        )}
+
+        {(item.instruments.length > 0 || !compact) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-8">
+            {!compact && (
+              <span className="label-faint text-[10px]">
+                {SOURCE_LABEL[item.source] ?? item.source}
+              </span>
+            )}
+            {item.instruments.map((i) => (
+              <span
+                key={i}
+                className="rounded border border-[var(--color-line)] bg-[var(--color-card)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--color-ink-dim)]"
+              >
+                {i.replace("_", "/")}
+              </span>
+            ))}
+          </div>
         )}
       </div>
 
-      {!compact && item.summary && (
-        <p className="mt-1 line-clamp-2 pl-8 text-xs text-[var(--color-ink-mute)]">
-          {item.summary}
-        </p>
-      )}
+      {/* Right-hand thumbnail, so the time gutter and headline keep a straight
+          left edge whether or not a story has artwork. Most rows have none —
+          SEC, Fed and calendar items never do — and the row must not look
+          broken when it is missing, which is why nothing reserves space.
 
-      {(item.instruments.length > 0 || !compact) && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-8">
-          {!compact && (
-            <span className="label-faint text-[10px]">
-              {SOURCE_LABEL[item.source] ?? item.source}
-            </span>
+          Plain <img> rather than next/image: the sources are arbitrary news
+          CDNs, and next/image would need every one of them allowlisted in
+          next.config before it would render at all. */}
+      {item.imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={item.imageUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          // Don't hand the publisher's CDN our URL on every row.
+          referrerPolicy="no-referrer"
+          // A dead image link is common on wires; drop it rather than leave a
+          // broken-image glyph sitting next to a real headline.
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+          className={clsx(
+            "shrink-0 rounded-md border border-[var(--color-line)] bg-[var(--color-sunken)] object-cover",
+            compact ? "h-12 w-16" : "h-16 w-24",
           )}
-          {item.instruments.map((i) => (
-            <span
-              key={i}
-              className="rounded border border-[var(--color-line)] bg-[var(--color-card)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--color-ink-dim)]"
-            >
-              {i.replace("_", "/")}
-            </span>
-          ))}
-        </div>
+        />
       )}
-    </>
+    </div>
   );
 
   return (

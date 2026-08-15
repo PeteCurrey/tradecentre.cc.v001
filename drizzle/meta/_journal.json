@@ -50,6 +50,13 @@
       "when": 1786697505514,
       "tag": "0006_clammy_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786804751658,
+      "tag": "0007_sad_roland_deschain",
+      "breakpoints": true
     }
   ]
 }

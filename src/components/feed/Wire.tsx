@@ -31,6 +31,8 @@ export type WireFilter = {
   sources?: string[];
   categories?: string[];
   instruments?: string[];
+  /** Tagged, central-bank or economic only. See FeedQuery.relevantOnly. */
+  relevantOnly?: boolean;
 };
 
 function query(filter: WireFilter, limit: number): string {
@@ -38,6 +40,7 @@ function query(filter: WireFilter, limit: number): string {
   if (filter.sources?.length) p.set("sources", filter.sources.join(","));
   if (filter.categories?.length) p.set("categories", filter.categories.join(","));
   if (filter.instruments?.length) p.set("instruments", filter.instruments.join(","));
+  if (filter.relevantOnly) p.set("relevant", "1");
   return p.toString();
 }
 
@@ -71,6 +74,15 @@ export function Wire({
   );
 
   /**
+   * The poll depends on the filter's VALUE, not its identity.
+   *
+   * `filter` is passed in as an object literal by the Today panel, so keying
+   * the effect on the object would restart the interval on any parent render —
+   * a self-retriggering fetch loop that only shows up under load.
+   */
+  const key = query(filter, limit);
+
+  /**
    * Ids present on the previous poll. Anything not in here is new, which is
    * what the accent marker keys off. Held in a ref because marking an item as
    * seen must not itself trigger a render.
@@ -80,9 +92,7 @@ export function Wire({
 
   const poll = useCallback(async () => {
     try {
-      const res = await fetch(`/api/feed?${query(filter, limit)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`/api/feed?${key}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`${res.status}`);
       const data = (await res.json()) as { items: WireRow[] };
 
@@ -98,7 +108,7 @@ export function Wire({
       // exactly like a quiet news day, and those must never be confusable.
       setError((e as Error).message);
     }
-  }, [filter, limit]);
+  }, [key]);
 
   useEffect(() => {
     // Immediate fetch on a filter change, then resume the interval.
@@ -145,9 +155,11 @@ export function Wire({
 
       {items.length === 0 ? (
         <p className="py-8 text-center text-sm text-[var(--color-ink-mute)]">
-          {sources.length || categories.length
-            ? "Nothing matches these filters."
-            : "No feed items stored yet. The wire fills on the first refresh."}
+          {filter.relevantOnly
+            ? "Nothing tagged or macro in the last stretch. The full wire is still running."
+            : sources.length || categories.length
+              ? "Nothing matches these filters."
+              : "No feed items stored yet. The wire fills on the first refresh."}
         </p>
       ) : (
         <ul className="min-h-0 flex-1 divide-y divide-[var(--color-line)] overflow-y-auto">
