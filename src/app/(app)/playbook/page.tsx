@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
 import { requireUser } from "@/lib/identity/tenant";
@@ -33,8 +33,17 @@ export default async function PlaybookPage() {
 
   const [bookRows, states, patternRows, trades] = await Promise.all([
     db.select().from(booksTable),
-    db.select().from(executionState),
-    db.select().from(patterns).where(eq(patterns.status, "live")).orderBy(asc(patterns.name)),
+    db.select().from(executionState).where(eq(executionState.userId, user.id)),
+    db
+      .select()
+      .from(patterns)
+      .where(
+        and(
+          eq(patterns.status, "live"),
+          or(isNull(patterns.userId), eq(patterns.userId, user.id)),
+        ),
+      )
+      .orderBy(asc(patterns.name)),
     loadTrades({ userId: user.id }),
   ]);
 

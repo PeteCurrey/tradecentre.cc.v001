@@ -49,6 +49,11 @@ const EXEMPT: Record<string, string> = {
     "maintenance path: pulls the broker ledger for every configured account",
   "src/lib/oanda/sync.ts": "maintenance path: writes raw transactions per account it is handed",
   "src/instrumentation.ts": "boot: seeds owner rows only, before any request exists",
+  "src/lib/execution/scheduler.ts":
+    "asks only whether ANY book on the platform is armed, to decide if the tick " +
+    "does work at all. Deliberately global — a per-member scheduler would need a " +
+    "timer per member — and it selects no member's data: one boolean, no rows " +
+    "returned to any caller. runTick() below it scopes per user.",
 };
 
 function walk(dir: string, out: string[] = []): string[] {

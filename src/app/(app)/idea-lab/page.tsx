@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
 import { requireUser } from "@/lib/identity/tenant";
@@ -54,9 +54,17 @@ export default async function IdeaLabPage() {
   const user = await requireUser();
 
   const [patternRows, states, accountRows, demoTrades] = await Promise.all([
-    db.select().from(patterns).orderBy(asc(patterns.name)),
-    db.select().from(executionState),
-    db.select().from(accounts).where(eq(accounts.active, true)),
+    // House library plus this member's own patterns.
+    db
+      .select()
+      .from(patterns)
+      .where(or(isNull(patterns.userId), eq(patterns.userId, user.id)))
+      .orderBy(asc(patterns.name)),
+    db.select().from(executionState).where(eq(executionState.userId, user.id)),
+    db
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.userId, user.id), eq(accounts.active, true))),
     loadTrades({ userId: user.id, demo: true }),
   ]);
 
