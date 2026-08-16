@@ -28,6 +28,7 @@ export type CurrentUser = {
   termsVersion: string | null;
   /* Chat profile — null until the wizard is completed. */
   username: string | null;
+  usernameChangedAt: Date | null;
   jobTitle: string | null;
   avatar: string | null;
   chatEnabled: boolean;
@@ -45,6 +46,7 @@ function toCurrentUser(row: typeof users.$inferSelect): CurrentUser {
     termsAcceptedAt: row.termsAcceptedAt,
     termsVersion: row.termsVersion,
     username: row.username,
+    usernameChangedAt: row.usernameChangedAt,
     jobTitle: row.jobTitle,
     avatar: row.avatar,
     chatEnabled: row.chatEnabled,

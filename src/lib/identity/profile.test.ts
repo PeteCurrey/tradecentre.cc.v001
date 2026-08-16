@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   AVATAR_MAX_CHARS,
+  USERNAME_COOLDOWN_DAYS,
+  USERNAME_RESERVED_DAYS,
   initials,
+  isStillReserved,
+  usernameCooldownRemaining,
   validateAvatar,
   validateJobTitle,
   validateUsername,
 } from "./profile";
+
+const DAY = 86_400_000;
+const NOW = new Date("2026-08-15T12:00:00Z");
+const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
 
 describe("username", () => {
   it("accepts an ordinary name", () => {
@@ -103,6 +111,51 @@ describe("avatar", () => {
   it("refuses an oversized image", () => {
     const huge = "data:image/jpeg;base64," + "A".repeat(AVATAR_MAX_CHARS);
     assert.equal(validateAvatar(huge).ok, false);
+  });
+});
+
+describe("username cooldown", () => {
+  it("is free when a name has never been changed", () => {
+    assert.equal(usernameCooldownRemaining(null, NOW), 0);
+  });
+
+  it("is free once the full period has passed", () => {
+    assert.equal(usernameCooldownRemaining(ago(USERNAME_COOLDOWN_DAYS), NOW), 0);
+    assert.equal(usernameCooldownRemaining(ago(USERNAME_COOLDOWN_DAYS + 5), NOW), 0);
+  });
+
+  it("reports whole days remaining part-way through", () => {
+    assert.equal(usernameCooldownRemaining(ago(0), NOW), USERNAME_COOLDOWN_DAYS);
+    assert.equal(usernameCooldownRemaining(ago(10), NOW), USERNAME_COOLDOWN_DAYS - 10);
+  });
+
+  it("rounds up, so '1 day' never means 'in four minutes'", () => {
+    // 29 days and 23 hours in: a fraction of a day is left, report 1, not 0.
+    const almost = new Date(NOW.getTime() - (USERNAME_COOLDOWN_DAYS * DAY - 60 * 60 * 1000));
+    assert.equal(usernameCooldownRemaining(almost, NOW), 1);
+  });
+
+  it("treats a future timestamp as free rather than a month's wait", () => {
+    // A clock skew must not lock someone out.
+    assert.equal(usernameCooldownRemaining(new Date(NOW.getTime() + 5 * DAY), NOW), 0);
+  });
+});
+
+describe("username reservation", () => {
+  it("holds a freed name for the full window", () => {
+    assert.equal(isStillReserved(ago(0), NOW), true);
+    assert.equal(isStillReserved(ago(USERNAME_RESERVED_DAYS - 1), NOW), true);
+  });
+
+  it("releases it afterwards", () => {
+    assert.equal(isStillReserved(ago(USERNAME_RESERVED_DAYS), NOW), false);
+    assert.equal(isStillReserved(ago(USERNAME_RESERVED_DAYS + 1), NOW), false);
+  });
+
+  it("holds longer than the cooldown, so a name cannot be swapped between two people", () => {
+    // If reservation were the shorter of the two, A could rename, wait out the
+    // cooldown, and B could take A's old name while the room still remembers it.
+    assert.ok(USERNAME_RESERVED_DAYS > USERNAME_COOLDOWN_DAYS);
   });
 });
 

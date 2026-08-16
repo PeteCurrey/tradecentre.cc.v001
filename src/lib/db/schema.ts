@@ -700,6 +700,8 @@ export const users = pgTable(
      * alongside `trader` to impersonate them.
      */
     username: text("username"),
+    /** When it was last set. Drives the change cooldown — see lib/identity/profile.ts. */
+    usernameChangedAt: timestamp("username_changed_at", { withTimezone: true }),
     jobTitle: text("job_title"),
     /**
      * Avatar as a small `data:` URL rather than a link or an upload.
@@ -731,6 +733,39 @@ export const users = pgTable(
     uniqueIndex("users_username_idx")
       .on(sql`lower(${t.username})`)
       .where(sql`${t.username} is not null`),
+  ],
+);
+
+/**
+ * Every username a member has released.
+ *
+ * Two jobs, and the second is the reason the table exists rather than a column.
+ *
+ * It is the AUDIT TRAIL: message rows carry a user id, and the room renders
+ * whatever name that user holds now — so a member who posts and then renames
+ * relabels their own history. That is right for them and useless for anyone
+ * asking "who was `gold_bug` in August", which is exactly the question a
+ * moderation complaint asks.
+ *
+ * It is also the RESERVATION list. A freed name cannot be taken by someone else
+ * for a while, because the confusion is not the rename — it is a second person
+ * appearing under a name other members already associate with the first.
+ */
+export const usernameHistory = pgTable(
+  "username_history",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The name as it was held, original casing preserved. */
+    username: text("username").notNull(),
+    heldFrom: timestamp("held_from", { withTimezone: true }),
+    releasedAt: timestamp("released_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("username_history_user_idx").on(t.userId),
+    index("username_history_name_idx").on(sql`lower(${t.username})`),
   ],
 );
 

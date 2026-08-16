@@ -63,7 +63,17 @@ export default async function ChatPage({
       <PageHeader
         title="Chat"
         subtitle="Rooms for members. Opinions here are not advice."
-        action={<ChatToggle enabled={user.chatEnabled} username={user.username ?? ""} />}
+        action={
+          <div className="flex items-center gap-4">
+            <Link
+              href="/chat/profile"
+              className="text-xs font-semibold text-[var(--color-ink-mute)] hover:text-[var(--color-ink-dim)]"
+            >
+              Edit profile
+            </Link>
+            <ChatToggle enabled={user.chatEnabled} username={user.username ?? ""} />
+          </div>
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">

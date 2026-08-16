@@ -71,6 +71,13 @@
       "when": 1786832338605,
       "tag": "0009_minor_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786872617143,
+      "tag": "0010_dashing_magma",
+      "breakpoints": true
     }
   ]
 }

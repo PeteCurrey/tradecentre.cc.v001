@@ -39,7 +39,51 @@ const RESERVED = new Set([
   "peter",
 ]);
 
+/**
+ * How long between username changes, and how long a freed name is held.
+ *
+ * Renaming is allowed because being stuck with a name chosen in thirty seconds
+ * during onboarding is a bad outcome, and because a member who used something
+ * identifying deserves a way out of it. Rate-limiting it is what stops a name
+ * becoming a costume changed between conversations.
+ *
+ * The reservation matters more than the cooldown. Other members remember names,
+ * not user ids, so the damage is not someone renaming themselves — it is a
+ * second person turning up under a name the room already associates with the
+ * first. Holding a freed name breaks that.
+ */
+export const USERNAME_COOLDOWN_DAYS = 30;
+export const USERNAME_RESERVED_DAYS = 90;
+
+const DAY_MS = 86_400_000;
+
 export type Validation = { ok: true; value: string } | { ok: false; error: string };
+
+/**
+ * Whole days left before the username may change again, 0 when free.
+ *
+ * Rounded UP, so "1 day" never means "in about four minutes" — a member told
+ * to come back tomorrow and refused again would reasonably think it broken.
+ */
+export function usernameCooldownRemaining(
+  changedAt: Date | null,
+  now: Date = new Date(),
+): number {
+  if (!changedAt) return 0;
+  const elapsed = now.getTime() - changedAt.getTime();
+  // A future timestamp means a clock problem, not a 30-day wait.
+  if (elapsed < 0) return 0;
+  const remaining = USERNAME_COOLDOWN_DAYS * DAY_MS - elapsed;
+  return remaining <= 0 ? 0 : Math.ceil(remaining / DAY_MS);
+}
+
+/** Is a name someone else released still held against them? */
+export function isStillReserved(
+  releasedAt: Date,
+  now: Date = new Date(),
+): boolean {
+  return now.getTime() - releasedAt.getTime() < USERNAME_RESERVED_DAYS * DAY_MS;
+}
 
 /**
  * Usernames are letters, digits and underscores.
