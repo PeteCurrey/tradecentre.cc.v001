@@ -35,6 +35,10 @@ export const patternStatusEnum = pgEnum("pattern_status", [
   "live",
   "retired",
 ]);
+/** Platform role. The OWNER is not here — see lib/identity/roles.ts. */
+export const userRoleEnum = pgEnum("user_role", ["member", "moderator", "staff", "admin"]);
+export const userStatusEnum = pgEnum("user_status", ["active", "suspended", "banned"]);
+
 export const opportunitySourceEnum = pgEnum("opportunity_source", [
   "spotted", // Peter saw it
   "ai", // the AI proposed it
@@ -715,6 +719,26 @@ export const users = pgTable(
      */
     avatar: text("avatar"),
 
+    /* ---- Role and standing ---- */
+
+    /**
+     * Granted role. The owner's authority is NOT stored here — it comes from
+     * the reserved external id, so no update to this column can ever confer it
+     * and no admin can grant themselves the top of the tree.
+     */
+    role: userRoleEnum("role").notNull().default("member"),
+    status: userStatusEnum("status").notNull().default("active"),
+    /**
+     * End of a suspension. Null while suspended means indefinite.
+     *
+     * Suspensions expire by date rather than being cleared by a job: there is
+     * no scheduler here, and one that failed silently would leave people
+     * suspended forever with nothing showing why.
+     */
+    suspendedUntil: timestamp("suspended_until", { withTimezone: true }),
+    /** Shown to the member, so a sanction is never unexplained. */
+    statusReason: text("status_reason"),
+
     /**
      * The toggle. Distinct from having accepted the terms: acceptance is a
      * fact that happened once, this is a switch the member can turn off again
@@ -733,6 +757,39 @@ export const users = pgTable(
     uniqueIndex("users_username_idx")
       .on(sql`lower(${t.username})`)
       .where(sql`${t.username} is not null`),
+  ],
+);
+
+/**
+ * Every moderation act, permanently.
+ *
+ * Append-only and never updated. The columns on `users` say what someone's
+ * standing IS; this says how it got that way and who decided — the question
+ * that matters when a sanction is disputed, and the one a bare status column
+ * can never answer.
+ *
+ * The actor is nullable ON DELETE SET NULL rather than cascading: removing a
+ * moderator must not erase the record of what they did.
+ */
+export const moderationActions = pgTable(
+  "moderation_actions",
+  {
+    id: serial("id").primaryKey(),
+    actorId: integer("actor_id").references(() => users.id, { onDelete: "set null" }),
+    targetUserId: integer("target_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** suspend | unsuspend | ban | unban | role_change | message_delete */
+    action: text("action").notNull(),
+    /** Free text shown to the member. */
+    reason: text("reason"),
+    /** Before/after for a role change, the end date for a suspension, etc. */
+    detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("moderation_target_idx").on(t.targetUserId, t.createdAt),
+    index("moderation_created_idx").on(t.createdAt),
   ],
 );
 

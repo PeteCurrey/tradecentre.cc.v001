@@ -53,7 +53,14 @@ export function useArmLevel(): ArmLevel {
   return useContext(ArmContext);
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  children,
+  privileged = false,
+}: {
+  children: ReactNode;
+  /** Draws the Admin link. Not a permission — see the layout. */
+  privileged?: boolean;
+}) {
   const [scope, setScopeState] = useState<Scope>("all-live");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const live = useLiveStream();
@@ -114,13 +121,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               armLevel === "halted" && "desk-halted",
             )}
           >
-            <Sidebar onOpenPalette={() => setPaletteOpen(true)} />
+            <Sidebar onOpenPalette={() => setPaletteOpen(true)} privileged={privileged} />
             <div className="flex min-w-0 flex-1 flex-col">
               <TopBar scope={scope} onScopeChange={setScope} connection={live.state} />
               <main className="min-h-0 flex-1 overflow-y-auto p-5">{children}</main>
             </div>
           </div>
-          <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+          <CommandPalette
+            open={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            privileged={privileged}
+          />
           <EngineToasts events={live.events} onDismiss={live.dismissEvent} />
         </ArmContext.Provider>
       </LiveContext.Provider>

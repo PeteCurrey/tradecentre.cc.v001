@@ -19,6 +19,7 @@ import {
   LineChart,
   ListChecks,
   MessagesSquare,
+  ShieldCheck,
   Radio,
   ScrollText,
   Settings,
@@ -35,6 +36,13 @@ export type NavItem = {
   icon: LucideIcon;
   /** One-line purpose, surfaced in the command palette. */
   hint: string;
+  /**
+   * Hidden from anyone below moderator.
+   *
+   * Hiding is presentation only — /admin returns 404 to anyone without the
+   * rank whether or not they can see this link.
+   */
+  privileged?: boolean;
 };
 
 export type NavGroup = {
@@ -276,11 +284,31 @@ export const NAV: NavGroup[] = [
         icon: Settings,
         hint: "Accounts, books, risk config, models, display",
       },
+      {
+        href: "/admin",
+        label: "Admin",
+        icon: ShieldCheck,
+        hint: "Members, roles, suspensions and the moderation log",
+        privileged: true,
+      },
     ],
   },
 ];
 
 export const ALL_NAV_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);
+
+/**
+ * The nav as a given person should see it.
+ *
+ * Groups left empty by the filter are dropped, so hiding the only privileged
+ * item does not leave a heading with nothing under it.
+ */
+export function visibleNav(privileged: boolean): NavGroup[] {
+  if (privileged) return NAV;
+  return NAV.map((g) => ({ ...g, items: g.items.filter((i) => !i.privileged) })).filter(
+    (g) => g.items.length > 0,
+  );
+}
 
 /** Longest-prefix match, so /trades/abc123 still highlights Trade Log. */
 export function activeHref(pathname: string): string {

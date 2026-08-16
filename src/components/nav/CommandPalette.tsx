@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import { ALL_NAV_ITEMS } from "@/lib/nav";
+import { visibleNav } from "@/lib/nav";
 import { clsx } from "@/lib/clsx";
 
 /**
@@ -16,9 +16,12 @@ import { clsx } from "@/lib/clsx";
 export function CommandPalette({
   open,
   onClose,
+  privileged = false,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Keeps Admin out of search for anyone who cannot open it. */
+  privileged?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -28,11 +31,12 @@ export function CommandPalette({
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return ALL_NAV_ITEMS;
-    return ALL_NAV_ITEMS.filter(
+    const items = visibleNav(privileged).flatMap((g) => g.items);
+    if (!q) return items;
+    return items.filter(
       (i) => i.label.toLowerCase().includes(q) || i.hint.toLowerCase().includes(q),
     );
-  }, [query]);
+  }, [query, privileged]);
 
   useEffect(() => {
     if (open) {

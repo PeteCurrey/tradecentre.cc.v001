@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Command, LogOut } from "lucide-react";
-import { NAV, activeHref } from "@/lib/nav";
+import { activeHref, visibleNav } from "@/lib/nav";
 import { clsx } from "@/lib/clsx";
 
 const STORAGE_KEY = "sidebar.collapsed-groups";
@@ -16,7 +16,13 @@ const STORAGE_KEY = "sidebar.collapsed-groups";
  * The reference design uses a flat four-tab top bar; that does not survive 24
  * screens, so the navigation model diverges while the visual language stays.
  */
-export function Sidebar({ onOpenPalette }: { onOpenPalette: () => void }) {
+export function Sidebar({
+  onOpenPalette,
+  privileged = false,
+}: {
+  onOpenPalette: () => void;
+  privileged?: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const current = activeHref(pathname);
@@ -77,7 +83,7 @@ export function Sidebar({ onOpenPalette }: { onOpenPalette: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-4">
-        {NAV.map((group) => {
+        {visibleNav(privileged).map((group) => {
           const isCollapsed = collapsed.has(group.id);
           return (
             <div key={group.id} className="mb-1">

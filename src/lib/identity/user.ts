@@ -4,6 +4,12 @@ import { cookies } from "next/headers";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import { SESSION_COOKIE, readSessionUid } from "@/lib/auth/session";
+import {
+  canPostToChat,
+  canReadChat,
+  type Role,
+  type UserStatus,
+} from "@/lib/identity/roles";
 
 /**
  * Who is this request?
@@ -33,7 +39,18 @@ export type CurrentUser = {
   avatar: string | null;
   chatEnabled: boolean;
   onboardedAt: Date | null;
-  /** The password login. Not a permission system — see the note below. */
+  /* Role and standing. */
+  role: Role;
+  status: UserStatus;
+  suspendedUntil: Date | null;
+  statusReason: string | null;
+  /**
+   * The password login, and the deployment's owner.
+   *
+   * Derived from the reserved external id, never stored as a role — so no
+   * update to the role column can confer it, and no admin can promote
+   * themselves to it.
+   */
   isOwner: boolean;
 };
 
@@ -51,6 +68,10 @@ function toCurrentUser(row: typeof users.$inferSelect): CurrentUser {
     avatar: row.avatar,
     chatEnabled: row.chatEnabled,
     onboardedAt: row.onboardedAt,
+    role: row.role,
+    status: row.status,
+    suspendedUntil: row.suspendedUntil,
+    statusReason: row.statusReason,
     isOwner: row.externalId === OWNER_EXTERNAL_ID,
   };
 }
@@ -135,9 +156,21 @@ export function hasCompletedChatOnboarding(u: CurrentUser): boolean {
   return u.onboardedAt !== null && u.username !== null && hasAcceptedChatTerms(u);
 }
 
-/** May this member post right now? */
+/**
+ * May this member post right now?
+ *
+ * Standing is checked FIRST and separately from the member's own switch: a
+ * suspension is not something they can toggle off, and folding the two into
+ * one boolean would make that distinction easy to lose in a later edit.
+ */
 export function canUseChat(u: CurrentUser): boolean {
+  if (!canPostToChat(u)) return false;
   return hasCompletedChatOnboarding(u) && u.chatEnabled;
+}
+
+/** May they even see the rooms? Banned members cannot; suspended ones can. */
+export function canViewChat(u: CurrentUser): boolean {
+  return canReadChat(u);
 }
 
 export async function acceptChatTerms(userId: number): Promise<void> {

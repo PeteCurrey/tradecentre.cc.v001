@@ -6,7 +6,13 @@ import {
   readRoom,
   roomExists,
 } from "@/lib/chat/rooms";
-import { canUseChat, currentUser, type CurrentUser } from "@/lib/identity/user";
+import {
+  canUseChat,
+  currentUser,
+  hasCompletedChatOnboarding,
+  type CurrentUser,
+} from "@/lib/identity/user";
+import { describeStanding, isBanned, isSuspended } from "@/lib/identity/roles";
 
 /**
  * Chat read and write.
@@ -32,6 +38,32 @@ function rateLimited(userId: number): boolean {
   }
   rec.count++;
   return rec.count > MAX_PER_WINDOW;
+}
+
+/**
+ * Why posting was refused, in terms the member can act on.
+ *
+ * Order matters: a sanction outranks a setup problem, because a suspended
+ * member who has also not finished the wizard should be told about the
+ * suspension — finishing the wizard would not help them.
+ */
+function postingRefusal(user: CurrentUser): string {
+  if (isBanned(user)) {
+    return user.statusReason
+      ? `Your access to chat has been withdrawn: ${user.statusReason}`
+      : "Your access to chat has been withdrawn.";
+  }
+  if (isSuspended(user)) {
+    // Only the first letter — lowercasing the whole string turns "23 Aug"
+    // into "23 aug".
+    const s = describeStanding(user);
+    const when = s.charAt(0).toLowerCase() + s.slice(1);
+    return user.statusReason
+      ? `You are ${when}: ${user.statusReason}`
+      : `You are ${when}.`;
+  }
+  if (!hasCompletedChatOnboarding(user)) return "Complete chat setup before posting.";
+  return "Chat is switched off for your account. Turn it on to post.";
 }
 
 async function requireMember(): Promise<CurrentUser | NextResponse> {
@@ -71,14 +103,17 @@ export async function POST(req: NextRequest) {
   const user = await requireMember();
   if (user instanceof NextResponse) return user;
 
-  // Re-checked here, not merely in the UI: completing the wizard AND having
-  // the switch on are both required, and a server action or fetch reaches this
-  // route whatever the screen is showing.
+  /**
+   * Re-checked here, not merely in the UI: completing the wizard AND having
+   * the switch on are both required, and a server action or fetch reaches this
+   * route whatever the screen is showing.
+   *
+   * A sanction is reported as a sanction. Telling a suspended member to "switch
+   * chat on" sends them to a toggle that will not help — the same class of
+   * mistake as reporting a broken password hash as a wrong password.
+   */
   if (!canUseChat(user)) {
-    return NextResponse.json(
-      { error: "Complete chat setup and switch chat on before posting." },
-      { status: 403 },
-    );
+    return NextResponse.json({ error: postingRefusal(user) }, { status: 403 });
   }
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
