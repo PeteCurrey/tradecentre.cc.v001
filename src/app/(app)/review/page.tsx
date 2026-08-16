@@ -2,6 +2,7 @@ import Link from "next/link";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { dailyPlans, dailyReviews, patterns, stateLogs } from "@/lib/db/schema";
 import { accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { summarise } from "@/lib/analytics/stats";
@@ -29,6 +30,7 @@ export default async function ReviewPage({
   searchParams: Promise<{ day?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
 
   const today = dayKey(new Date(), DISPLAY_TZ);
@@ -41,8 +43,8 @@ export default async function ReviewPage({
       db.select().from(dailyPlans).where(eq(dailyPlans.day, day)),
       db.select().from(stateLogs).where(eq(stateLogs.day, day)),
       db.select().from(patterns),
-      loadTrades({}),
-      accountCurrency(),
+      loadTrades({ userId: user.id }),
+      accountCurrency(user.id),
       db.select({ day: dailyReviews.day }).from(dailyReviews).orderBy(desc(dailyReviews.day)).limit(8),
     ]);
 

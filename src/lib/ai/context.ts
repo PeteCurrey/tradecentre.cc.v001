@@ -48,20 +48,25 @@ function summaryLine(label: string, s: ReturnType<typeof summarise>): string {
   );
 }
 
-export async function buildAskContext(): Promise<AskContext> {
+/**
+ * @param userId  whose desk the model is answering about. Passed in rather than
+ *                resolved here so this stays callable from a job with no
+ *                request context — and so it cannot default to "everyone".
+ */
+export async function buildAskContext(userId: number): Promise<AskContext> {
   const [live, environment] = await Promise.all([
-    loadTrades({}),
-    activeEnvironment(),
+    loadTrades({ userId }),
+    activeEnvironment(userId),
   ]);
 
   /**
-   * With no live account connected, `loadTrades({})` falls back to the practice
+   * With no live account connected, `loadTrades({ userId })` falls back to the practice
    * books — so "live" and "demo" would be the same rows. Asking for both and
    * reporting them separately would tell the model there are twice as many
    * trades as exist. The brief states which environment the figures came from
    * instead.
    */
-  const demo = environment === "live" ? await loadTrades({ demo: true }) : [];
+  const demo = environment === "live" ? await loadTrades({ userId, demo: true }) : [];
 
   const closed = live.filter((t) => t.exitTime !== null);
   const open = live.filter((t) => t.exitTime === null);

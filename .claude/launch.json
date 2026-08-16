@@ -1,6 +1,12 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "desk", "url": "http://localhost:3210", "port": 3210 }
+    {
+      "name": "desk",
+      "runtimeExecutable": "./node_modules/.bin/next",
+      "runtimeArgs": ["dev", "-p", "3210"],
+      "url": "http://localhost:3210",
+      "port": 3210
+    }
   ]
 }

@@ -22,6 +22,7 @@ const { accounts, appConfig, books, instruments, patterns } = await import(
   "../src/lib/db/schema.ts"
 );
 const { oanda } = await import("../src/lib/oanda/client.ts");
+const { ownerUser } = await import("../src/lib/identity/user.ts");
 const { SEED_PATTERNS } = await import("../src/lib/patterns/seed.ts");
 const {
   DEFAULT_CONVICTION_MULTIPLIERS,
@@ -74,6 +75,16 @@ function bookFromAlias(alias: string | null | undefined, fallbackIndex: number):
   return (["primary", "fx", "indices", "commodities"] as const)[fallbackIndex % 4];
 }
 
+/**
+ * Accounts discovered by seeding belong to the OWNER.
+ *
+ * Seeding runs from the command line with no session, and the tokens it reads
+ * are Pete's own from the environment — so the only member these accounts could
+ * belong to is him. A member's own accounts are attached through the app, under
+ * their own session, never here.
+ */
+const owner = await ownerUser();
+
 for (const environment of ["practice", "live"] as const) {
   const tokenSet =
     environment === "live"
@@ -112,7 +123,7 @@ for (const environment of ["practice", "live"] as const) {
 
     await db
       .insert(accounts)
-      .values({ id: acc.id, book, environment, currency, alias })
+      .values({ id: acc.id, userId: owner.id, book, environment, currency, alias })
       .onConflictDoUpdate({
         target: accounts.id,
         // Never clobber a mapping Peter has set in Settings.
@@ -181,11 +192,17 @@ if (!anyAccount) {
 /* ---- Patterns ---------------------------------------------------------- */
 log("\n=== PATTERNS ===");
 log("  All seeded as `incubating` — nothing reaches live capital untested.");
+log("  Visibility `house` — the curated library every member can read.");
 
 for (const p of SEED_PATTERNS) {
   await db
     .insert(patterns)
     .values({
+      // The house library: userId null, readable by every member, editable by
+      // the owner alone. Not attributed to Pete's user row on purpose — the
+      // library is a property of the platform, not of one account.
+      userId: null,
+      visibility: "house",
       slug: p.slug,
       name: p.name,
       summary: p.summary,

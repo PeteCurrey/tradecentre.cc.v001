@@ -2,6 +2,7 @@ import Link from "next/link";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { opportunities, patterns } from "@/lib/db/schema";
 import { loadTrades } from "@/lib/analytics/load";
 import { summarise } from "@/lib/analytics/stats";
@@ -30,6 +31,7 @@ export default async function OpportunitiesPage({
   searchParams: Promise<{ day?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
 
   const today = dayKey(new Date(), DISPLAY_TZ);
@@ -39,7 +41,7 @@ export default async function OpportunitiesPage({
     db.select().from(opportunities).where(eq(opportunities.day, day)).orderBy(desc(opportunities.score)),
     db.select().from(opportunities).orderBy(desc(opportunities.day)).limit(2000),
     db.select().from(patterns),
-    loadTrades({}),
+    loadTrades({ userId: user.id }),
   ]);
 
   const patternName = new Map(patternRows.map((p) => [p.id, p.name]));

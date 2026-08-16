@@ -73,10 +73,10 @@ function plPerPriceFor(p: {
   return plPerPriceMemo.get(p.oandaTradeId) ?? null;
 }
 
-async function buildPush(): Promise<DeskPush> {
+async function buildPush(userId: number): Promise<DeskPush> {
   const [snapshot, execRows] = await Promise.all([
-    getDeskSnapshot(),
-    db.select().from(executionState),
+    getDeskSnapshot(userId),
+    db.select().from(executionState).where(eq(executionState.userId, userId)),
   ]);
 
   const execByBook = new Map(execRows.map((r) => [r.book as BookId, r]));
@@ -159,29 +159,51 @@ async function buildPush(): Promise<DeskPush> {
  * receive a tick, so its row and its ribbon would sit motionless while
  * everything around them moved — the exact failure this feature exists to fix.
  */
-function syncInstruments(push: DeskPush): void {
-  const held = push.books.flatMap((b) => b.positions.map((p) => p.instrument));
+function syncInstruments(pushes: DeskPush[]): void {
+  const held = pushes.flatMap((push) =>
+    push.books.flatMap((b) => b.positions.map((p) => p.instrument)),
+  );
   hub.setInstruments(held);
 }
 
 /** Forget conversion factors for trades that are no longer open. */
-function pruneMemo(push: DeskPush): void {
+function pruneMemo(pushes: DeskPush[]): void {
   const open = new Set(
-    push.books.flatMap((b) => b.positions.map((p) => p.oandaTradeId)),
+    pushes.flatMap((push) =>
+      push.books.flatMap((b) => b.positions.map((p) => p.oandaTradeId)),
+    ),
   );
   for (const id of plPerPriceMemo.keys()) {
     if (!open.has(id)) plPerPriceMemo.delete(id);
   }
 }
 
+/**
+ * Build and push one snapshot PER WATCHED MEMBER.
+ *
+ * Only members with a browser actually connected are built. Iterating every
+ * user on the platform would make the broker call count grow with signups to
+ * produce snapshots nobody is looking at — and the hub already knows exactly
+ * who is listening.
+ */
 async function broadcast(): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   try {
-    const push = await buildPush();
-    hub.publishDesk(push);
-    syncInstruments(push);
-    pruneMemo(push);
+    const watched = hub.watchedUserIds;
+    if (watched.length === 0) return;
+
+    const pushes: DeskPush[] = [];
+    for (const userId of watched) {
+      const push = await buildPush(userId);
+      hub.publishDesk(userId, push);
+      pushes.push(push);
+    }
+
+    // Instruments and the memo span every member: one pricing stream serves
+    // them all, and it must carry every held instrument regardless of whose.
+    syncInstruments(pushes);
+    pruneMemo(pushes);
     consecutiveErrors = 0;
   } catch (e) {
     consecutiveErrors++;

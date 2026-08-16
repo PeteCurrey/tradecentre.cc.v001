@@ -1,5 +1,6 @@
 import "server-only";
 import { env } from "@/lib/env";
+import { closeUnitsBody } from "./close-units";
 import type { GuardApproval } from "@/lib/execution/guards";
 import type { OandaEnvironment } from "./types";
 
@@ -258,18 +259,43 @@ export class OandaExecutionClient {
   }
 
   /**
-   * Close an open trade.
+   * Close an open trade, wholly or in part.
    *
    * Takes an explicit trade id rather than an approval: closing reduces risk,
    * and a kill switch that could be blocked by a guard would be worse than
    * useless.
+   *
+   * `units` omitted closes everything. Passing a magnitude closes that many
+   * units and leaves the rest running — OANDA takes an unsigned count here and
+   * infers the direction from the trade, so a caller's signed "units to close"
+   * must have its magnitude taken. Getting that wrong is not a rounding error:
+   * a negative string is rejected outright, and the position stays fully open
+   * while the log records an attempt.
+   *
+   * Refuses a non-positive or non-integer count rather than sending it. OANDA
+   * would reject it anyway, but failing here keeps the reason in our own log
+   * instead of buried in a broker error body.
    */
   async closeTrade(
     accountId: string,
     tradeId: string,
     send: boolean,
+    units?: number,
   ): Promise<SubmitResult> {
-    const body = { units: "ALL" };
+    const resolved = closeUnitsBody(units);
+    if (!resolved.ok) {
+      return {
+        sent: false,
+        ok: false,
+        status: 0,
+        request: { tradeId, units },
+        response: null,
+        oandaOrderId: null,
+        oandaTradeId: tradeId,
+        error: resolved.error,
+      };
+    }
+    const body = resolved.body;
     if (!send) {
       return {
         sent: false,

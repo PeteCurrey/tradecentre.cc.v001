@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { patterns as patternsTable } from "@/lib/db/schema";
 import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { groupBy, summarise } from "@/lib/analytics/stats";
@@ -27,14 +28,15 @@ export default async function PatternPerformancePage({
   searchParams: Promise<{ book?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
   const [trades, patterns, currency, environment] = await Promise.all([
-    loadTrades({ book }),
+    loadTrades({ userId: user.id, book }),
     db.select().from(patternsTable),
-    accountCurrency(),
-    activeEnvironment(),
+    accountCurrency(user.id),
+    activeEnvironment(user.id),
   ]);
 
   const name = new Map(patterns.map((p) => [p.id, p]));

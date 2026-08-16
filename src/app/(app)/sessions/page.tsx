@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { activeEnvironment, loadTrades } from "@/lib/analytics/load";
 import { groupBy, summarise } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
@@ -32,12 +33,13 @@ export default async function SessionsPage({
   searchParams: Promise<{ book?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
   const [trades, environment] = await Promise.all([
-    loadTrades({ book }),
-    activeEnvironment(),
+    loadTrades({ userId: user.id, book }),
+    activeEnvironment(user.id),
   ]);
   const s = summarise(trades);
 

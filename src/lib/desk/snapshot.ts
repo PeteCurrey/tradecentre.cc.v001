@@ -89,12 +89,17 @@ function londonDayStart(now = new Date()): Date {
   return new Date(Date.UTC(p.year, p.month - 1, p.day));
 }
 
-export async function getDeskSnapshot(): Promise<DeskSnapshot> {
+/**
+ * @param userId  whose desk. Required — there is no "the" desk any more, and a
+ *                default here would silently mean "whoever's accounts turn up
+ *                first", which is the bug this parameter exists to prevent.
+ */
+export async function getDeskSnapshot(userId: number): Promise<DeskSnapshot> {
   const dayStart = londonDayStart();
   const degraded: BookId[] = [];
 
   const [accountRows, bookRows] = await Promise.all([
-    db.select().from(accounts),
+    db.select().from(accounts).where(eq(accounts.userId, userId)),
     db.select().from(booksTable),
   ]);
 

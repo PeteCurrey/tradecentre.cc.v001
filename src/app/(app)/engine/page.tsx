@@ -1,6 +1,8 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth/guard";
+import { currentUser } from "@/lib/identity/user";
 import { accounts, executionState, patterns, trades } from "@/lib/db/schema";
 import { ensureExecutionState } from "@/lib/execution/engine";
 import { schedulerStatus } from "@/lib/execution/scheduler";
@@ -38,13 +40,44 @@ const UNIVERSE = [
 
 export default async function EnginePage() {
   await requireSession();
-  await ensureExecutionState();
+
+  // Every query below names this member. The engine page is the one screen that
+  // can start real orders, so an unscoped read here is not a privacy slip — it
+  // is showing someone another member's arm switches.
+  const user = await currentUser();
+  if (!user) notFound();
+  await ensureExecutionState(user.id);
+
+  const myAccounts = db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.userId, user.id), eq(accounts.active, true)));
 
   const [states, accountRows, patternRows, openTrades] = await Promise.all([
-    db.select().from(executionState),
-    db.select().from(accounts).where(eq(accounts.active, true)),
-    db.select().from(patterns).orderBy(asc(patterns.name)),
-    db.select().from(trades).where(eq(trades.state, "open")),
+    db.select().from(executionState).where(eq(executionState.userId, user.id)),
+    myAccounts,
+    // The house library plus this member's own patterns — nothing of anyone
+    // else's, whatever they have named it.
+    db
+      .select()
+      .from(patterns)
+      .where(or(isNull(patterns.userId), eq(patterns.userId, user.id)))
+      .orderBy(asc(patterns.name)),
+    db
+      .select()
+      .from(trades)
+      .where(
+        and(
+          eq(trades.state, "open"),
+          inArray(
+            trades.accountId,
+            db
+              .select({ id: accounts.id })
+              .from(accounts)
+              .where(eq(accounts.userId, user.id)),
+          ),
+        ),
+      ),
   ]);
 
   const rows: EngineBookRow[] = BOOK_IDS.map((book: BookId) => {

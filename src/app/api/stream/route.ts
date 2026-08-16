@@ -1,5 +1,6 @@
-import { hasSession } from "@/lib/auth/guard";
+import { currentUser } from "@/lib/identity/user";
 import { hub } from "@/lib/stream/hub";
+import type { HubEvent } from "@/lib/stream/events";
 
 /**
  * Live price feed, as Server-Sent Events.
@@ -21,10 +22,16 @@ export const dynamic = "force-dynamic";
 const KEEPALIVE_MS = 15_000;
 
 export async function GET(req: Request) {
-  // The feed carries live account data, so it is gated like every other route.
-  if (!(await hasSession())) {
+  /**
+   * The feed carries live account data, so it is gated like every other route —
+   * but it needs the member, not just the fact of a session. Every private
+   * frame on this stream is routed by the id resolved here.
+   */
+  const user = await currentUser();
+  if (!user) {
     return new Response("unauthenticated", { status: 401 });
   }
+  const userId = user.id;
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
@@ -51,10 +58,15 @@ export async function GET(req: Request) {
        */
       send("status", { state: hub.connectionState });
       for (const tick of hub.snapshot) send("tick", tick);
-      if (hub.deskSnapshot) send("desk", hub.deskSnapshot);
-      if (hub.scanSnapshot) send("scan", hub.scanSnapshot);
 
-      unsubscribe = hub.subscribe((e) => {
+      const priorDesk = hub.deskSnapshotFor(userId);
+      if (priorDesk) send("desk", priorDesk);
+      const priorScan = hub.scanSnapshotFor(userId);
+      if (priorScan) send("scan", priorScan);
+
+      // Subscribing AS a member, not merely as a signed-in browser. The hub
+      // drops every private event that isn't theirs before it reaches here.
+      unsubscribe = hub.subscribeFor(userId, (e: HubEvent) => {
         if (e.type === "tick") send("tick", e.tick);
         else if (e.type === "status") send("status", { state: e.state, detail: e.detail });
         else if (e.type === "transaction") send("transaction", e);
@@ -69,9 +81,11 @@ export async function GET(req: Request) {
        * not awaited: the response headers should go out now, and the push will
        * arrive over the stream that is already open.
        */
-      void import("@/lib/desk/broadcast").then((m) => m.broadcastNow()).catch(() => {
-        /* the periodic loop will cover it */
-      });
+      void import("@/lib/desk/broadcast")
+        .then((m) => m.broadcastNow())
+        .catch(() => {
+          /* the periodic loop will cover it */
+        });
 
       // Proxies drop idle connections; a comment line keeps it warm without
       // being delivered to any EventSource listener.

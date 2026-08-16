@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { getDeskSnapshot } from "@/lib/desk/snapshot";
 import { LiveDesk } from "@/components/desk/LiveDesk";
 import { WirePanel } from "@/components/feed/WirePanel";
@@ -15,6 +16,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function TodayPage() {
   await requireSession();
-  const snapshot = await getDeskSnapshot();
+  const user = await requireUser();
+  const snapshot = await getDeskSnapshot(user.id);
   return <LiveDesk snapshot={snapshot} wire={<WirePanel />} />;
 }

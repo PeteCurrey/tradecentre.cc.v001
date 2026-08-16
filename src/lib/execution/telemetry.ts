@@ -78,6 +78,16 @@ export function evaluateClauses(
  * where half the instruments are from this tick and half from the last.
  */
 export class ScanCollector {
+  /**
+   * One collector per MEMBER, not per tick.
+   *
+   * A tick sweeps every armed book on the platform, so a single collector would
+   * mix members' candidates into one push and hand each of them everyone
+   * else's setups. The user is taken at construction so a collector cannot
+   * exist without knowing whose scan it describes.
+   */
+  constructor(readonly userId: number) {}
+
   private readonly started = Date.now();
   private readonly candidates: ScanCandidate[] = [];
   private readonly books = new Set<string>();
@@ -127,7 +137,7 @@ export class ScanCollector {
       marketOpen: opts.marketOpen,
     };
 
-    hub.publishScan(push);
+    hub.publishScan(this.userId, push);
     return push;
   }
 }
@@ -139,8 +149,12 @@ export class ScanCollector {
  * is purely to keep the heartbeat beating so the UI can distinguish "idle" from
  * "dead". `books: []` is what tells the panel which of the two it is.
  */
-export function publishIdleScan(opts: { nextAt: number; marketOpen: boolean }): void {
-  hub.publishScan({
+export function publishIdleScan(opts: {
+  userId: number;
+  nextAt: number;
+  marketOpen: boolean;
+}): void {
+  hub.publishScan(opts.userId, {
     at: Date.now(),
     durationMs: 0,
     nextAt: opts.nextAt,
@@ -161,9 +175,9 @@ export function publishIdleScan(opts: { nextAt: number; marketOpen: boolean }): 
  * Fire-and-forget by design: an event that fails to reach a browser must never
  * affect whether an order was placed. The durable record is the order log.
  */
-export function announce(event: Omit<EngineEvent, "at">): void {
+export function announce(userId: number, event: Omit<EngineEvent, "at">): void {
   try {
-    hub.publishEngine({ ...event, at: Date.now() });
+    hub.publishEngine(userId, { ...event, at: Date.now() });
   } catch {
     /* a broken subscriber must not reach back into the trading path */
   }

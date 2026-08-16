@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { ownedAccountIds, requireUser } from "@/lib/identity/tenant";
 import { orderLog, patterns } from "@/lib/db/schema";
 import { Card } from "@/components/ui/Card";
 import { StatTile } from "@/components/ui/Card";
@@ -44,12 +45,14 @@ export default async function OrderLogPage({
   searchParams: Promise<{ book?: string; outcome?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
 
   const bookFilter = BOOK_IDS.find((b) => b === params.book);
   const outcomeFilter = OUTCOMES.find((o) => o === params.outcome);
 
   const conditions = [
+    inArray(orderLog.accountId, ownedAccountIds(user.id)),
     bookFilter ? eq(orderLog.book, bookFilter) : undefined,
     outcomeFilter ? eq(orderLog.outcome, outcomeFilter) : undefined,
   ].filter(Boolean);
@@ -61,7 +64,11 @@ export default async function OrderLogPage({
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(orderLog.createdAt))
       .limit(400),
-    db.select({ id: patterns.id, name: patterns.name }).from(patterns),
+    db
+      .select({ id: patterns.id, name: patterns.name })
+      .from(patterns)
+      // House library plus their own — never another member's private ones.
+      .where(or(isNull(patterns.userId), eq(patterns.userId, user.id))),
   ]);
 
   const patternName = new Map(patternRows.map((p) => [p.id, p.name]));

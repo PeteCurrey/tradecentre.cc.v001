@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { hasSession } from "@/lib/auth/guard";
+import { currentUser } from "@/lib/identity/user";
 import { executionState, accounts } from "@/lib/db/schema";
 import { BOOK_IDS, type BookId } from "@/lib/books";
 import { ensureExecutionState, haltBook } from "./engine";
@@ -30,8 +30,19 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 
 const bookSchema = z.enum(BOOK_IDS);
 
-async function authed(): Promise<boolean> {
-  return hasSession();
+/**
+ * The member performing this action, or null if not signed in.
+ *
+ * Replaces a bare `hasSession()` boolean deliberately. "Is someone signed in"
+ * was a sufficient question while the desk had one trader; the only safe
+ * question now is "signed in AS WHOM", because every statement below has to
+ * name whose books it is touching. Returning the user rather than a boolean
+ * makes forgetting to scope a type error rather than a silent cross-tenant
+ * write.
+ */
+async function actingUser(): Promise<{ id: number } | null> {
+  const user = await currentUser();
+  return user ? { id: user.id } : null;
 }
 
 function refresh() {
@@ -64,16 +75,17 @@ function refresh() {
  * submission, including re-arming one that was live before it was disarmed.
  */
 export async function armBook(book: string): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
   const parsed = bookSchema.safeParse(book);
   if (!parsed.success) return { ok: false, error: "Unknown book" };
 
-  await ensureExecutionState();
+  await ensureExecutionState(user.id);
 
   const [row] = await db
     .select()
     .from(executionState)
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
 
   if (row?.state === "halted") {
     return {
@@ -91,21 +103,22 @@ export async function armBook(book: string): Promise<ActionResult> {
       haltedReason: null,
       updatedAt: new Date(),
     })
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
 
   refresh();
   return { ok: true };
 }
 
 export async function disarmBook(book: string): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
   const parsed = bookSchema.safeParse(book);
   if (!parsed.success) return { ok: false, error: "Unknown book" };
 
   await db
     .update(executionState)
     .set({ state: "disarmed", armedAt: null, updatedAt: new Date() })
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
 
   refresh();
   return { ok: true };
@@ -136,15 +149,21 @@ export type ArmAllResult = {
 };
 
 export async function armAll(): Promise<ArmAllResult> {
-  if (!(await authed())) {
+  const user = await actingUser();
+  if (!user) {
     return { ok: false, armed: [], skipped: [], error: "Not signed in" };
   }
 
-  await ensureExecutionState();
+  await ensureExecutionState(user.id);
 
   const [states, accountRows] = await Promise.all([
-    db.select().from(executionState),
-    db.select().from(accounts).where(eq(accounts.active, true)),
+    db.select().from(executionState).where(eq(executionState.userId, user.id)),
+    // Scoped: otherwise another member's account would satisfy "this book has
+    // an account", and the button would arm a book with nothing behind it.
+    db
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.userId, user.id), eq(accounts.active, true))),
   ]);
 
   const hasAccount = new Set(accountRows.map((a) => a.book as BookId));
@@ -182,7 +201,7 @@ export async function armAll(): Promise<ArmAllResult> {
         haltedReason: null,
         updatedAt: new Date(),
       })
-      .where(eq(executionState.book, book));
+      .where(and(eq(executionState.userId, user.id), eq(executionState.book, book)));
     armed.push(book);
   }
 
@@ -192,12 +211,13 @@ export async function armAll(): Promise<ArmAllResult> {
 
 /** Disarm every book at once. The counterpart to `armAll`. */
 export async function disarmAll(): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
 
   await db
     .update(executionState)
     .set({ state: "disarmed", armedAt: null, updatedAt: new Date() })
-    .where(eq(executionState.state, "armed"));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.state, "armed")));
 
   refresh();
   return { ok: true };
@@ -212,10 +232,11 @@ export async function disarmAll(): Promise<ActionResult> {
  * nothing can start trading without a human clearing the halt.
  */
 export async function killAll(reason = "Kill switch"): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
-  await ensureExecutionState();
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+  await ensureExecutionState(user.id);
   for (const book of BOOK_IDS) {
-    await haltBook(book, reason);
+    await haltBook(user.id, book, reason);
   }
   refresh();
   return { ok: true };
@@ -226,14 +247,15 @@ export async function killAll(reason = "Kill switch"): Promise<ActionResult> {
  * whatever tripped the halt deserves a look before the engine runs again.
  */
 export async function clearHalt(book: string): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
   const parsed = bookSchema.safeParse(book);
   if (!parsed.success) return { ok: false, error: "Unknown book" };
 
   await db
     .update(executionState)
     .set({ state: "disarmed", haltedReason: null, armedAt: null, updatedAt: new Date() })
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
 
   refresh();
   return { ok: true };
@@ -246,14 +268,15 @@ export async function clearHalt(book: string): Promise<ActionResult> {
  * arm → observe a tick → go live, and never one action.
  */
 export async function setDryRun(book: string, dryRun: boolean): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
   const parsed = bookSchema.safeParse(book);
   if (!parsed.success) return { ok: false, error: "Unknown book" };
 
   const [row] = await db
     .select()
     .from(executionState)
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
   if (!row) return { ok: false, error: "No execution state for this book" };
 
   if (!dryRun && row.state !== "armed") {
@@ -263,7 +286,7 @@ export async function setDryRun(book: string, dryRun: boolean): Promise<ActionRe
   await db
     .update(executionState)
     .set({ dryRun, updatedAt: new Date() })
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
 
   refresh();
   return { ok: true };
@@ -281,7 +304,8 @@ export async function setAllowLiveCapital(
   allow: boolean,
   confirmation?: string,
 ): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
   const parsed = bookSchema.safeParse(book);
   if (!parsed.success) return { ok: false, error: "Unknown book" };
 
@@ -294,7 +318,7 @@ export async function setAllowLiveCapital(
   await db
     .update(executionState)
     .set({ allowLiveCapital: allow, updatedAt: new Date() })
-    .where(eq(executionState.book, parsed.data));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, parsed.data)));
 
   refresh();
   return { ok: true };
@@ -315,7 +339,8 @@ const limitsSchema = z.object({
  * that has never been configured cannot trade even while armed and live.
  */
 export async function setBookLimits(input: unknown): Promise<ActionResult> {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
 
   const parsed = limitsSchema.safeParse(input);
   if (!parsed.success) {
@@ -332,7 +357,7 @@ export async function setBookLimits(input: unknown): Promise<ActionResult> {
       enabledPatternIds: [...new Set(d.enabledPatternIds)],
       updatedAt: new Date(),
     })
-    .where(eq(executionState.book, d.book));
+    .where(and(eq(executionState.userId, user.id), eq(executionState.book, d.book)));
 
   refresh();
   return { ok: true };
@@ -347,7 +372,8 @@ export async function setBookLimits(input: unknown): Promise<ActionResult> {
 export async function runTickNow(): Promise<
   { ok: true; results: unknown } | { ok: false; error: string }
 > {
-  if (!(await authed())) return { ok: false, error: "Not signed in" };
+  const user = await actingUser();
+  if (!user) return { ok: false, error: "Not signed in" };
   const { runTick } = await import("./engine");
   try {
     const results = await runTick();
@@ -360,6 +386,11 @@ export async function runTickNow(): Promise<
 
 /** Books that have an account behind them, for the UI to grey out the rest. */
 export async function booksWithAccounts(): Promise<BookId[]> {
-  const rows = await db.select().from(accounts).where(eq(accounts.active, true));
+  const user = await actingUser();
+  if (!user) return [];
+  const rows = await db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.userId, user.id), eq(accounts.active, true)));
   return [...new Set(rows.map((r) => r.book as BookId))];
 }

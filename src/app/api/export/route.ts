@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { loadTrades } from "@/lib/analytics/load";
 import { DISPLAY_TZ, brokerDayKey, dayKey } from "@/lib/time";
 import { BOOK_IDS, type BookId } from "@/lib/books";
@@ -42,6 +43,7 @@ function csvCell(v: unknown): string {
 
 export async function GET(request: Request) {
   await requireSession();
+  const user = await requireUser();
 
   const url = new URL(request.url);
   const book = BOOK_IDS.find((b) => b === url.searchParams.get("book")) as
@@ -51,6 +53,7 @@ export async function GET(request: Request) {
   const from = url.searchParams.get("from");
 
   const trades = await loadTrades({
+    userId: user.id,
     book,
     demo,
     since: from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? new Date(`${from}T00:00:00Z`) : undefined,

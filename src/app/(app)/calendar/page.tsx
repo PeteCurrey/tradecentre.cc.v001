@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { summarise, type AnalyticsTrade } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
@@ -32,14 +33,15 @@ export default async function CalendarPage({
   searchParams: Promise<{ book?: string; boundary?: string; month?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
   const useBroker = params.boundary === "broker";
 
   const [trades, currency, environment] = await Promise.all([
-    loadTrades({ book }),
-    accountCurrency(),
-    activeEnvironment(),
+    loadTrades({ userId: user.id, book }),
+    accountCurrency(user.id),
+    activeEnvironment(user.id),
   ]);
 
   const closed = trades.filter((t) => t.exitTime !== null);

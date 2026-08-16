@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import {
   equityCurve,
@@ -32,13 +33,14 @@ export default async function ReportsPage({
   searchParams: Promise<{ book?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
   const [trades, currency, environment] = await Promise.all([
-    loadTrades({ book }),
-    accountCurrency(),
-    activeEnvironment(),
+    loadTrades({ userId: user.id, book }),
+    accountCurrency(user.id),
+    activeEnvironment(user.id),
   ]);
 
   const closed = trades.filter((t) => t.exitTime !== null);

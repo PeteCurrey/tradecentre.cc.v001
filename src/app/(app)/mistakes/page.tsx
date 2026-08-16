@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { summarise } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
@@ -34,13 +35,14 @@ export default async function MistakesPage({
   searchParams: Promise<{ book?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
   const [trades, currency, environment] = await Promise.all([
-    loadTrades({ book }),
-    accountCurrency(),
-    activeEnvironment(),
+    loadTrades({ userId: user.id, book }),
+    accountCurrency(user.id),
+    activeEnvironment(user.id),
   ]);
 
   const annotated = trades.filter((t) => t.mistakes.length > 0 || t.processGrade !== null);

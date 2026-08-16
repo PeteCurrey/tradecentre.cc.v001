@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { ownedAccountIds, requireUser } from "@/lib/identity/tenant";
 import {
   trades as tradesTable,
   accounts as accountsTable,
@@ -40,6 +41,7 @@ export default async function TradeLogPage({
 }) {
   // Second layer behind the proxy check — this one runs in the data path.
   await requireSession();
+  const user = await requireUser();
 
   const params = await searchParams;
 
@@ -49,6 +51,8 @@ export default async function TradeLogPage({
   const horizonFilter = HORIZON_IDS.find((h) => h === params.horizon);
 
   const conditions = [
+    // Tenancy first, so no filter combination can widen past this member.
+    inArray(tradesTable.accountId, ownedAccountIds(user.id)),
     bookFilter ? eq(tradesTable.book, bookFilter) : undefined,
     horizonFilter ? eq(tradesTable.horizon, horizonFilter) : undefined,
   ].filter(Boolean);
@@ -60,7 +64,10 @@ export default async function TradeLogPage({
     .orderBy(desc(tradesTable.entryTime))
     .limit(500);
 
-  const accounts = await db.select().from(accountsTable);
+  const accounts = await db
+    .select()
+    .from(accountsTable)
+    .where(eq(accountsTable.userId, user.id));
   const currency = accounts[0]?.currency ?? "GBP";
 
   /**

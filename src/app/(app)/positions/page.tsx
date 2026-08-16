@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { ownedAccountIds, requireUser } from "@/lib/identity/tenant";
 import { trades } from "@/lib/db/schema";
 import { getDeskSnapshot } from "@/lib/desk/snapshot";
 import { PositionsTable, type PositionRow } from "@/components/positions/PositionsTable";
@@ -9,10 +10,16 @@ export const dynamic = "force-dynamic";
 
 export default async function PositionsPage() {
   await requireSession();
+  const user = await requireUser();
 
   const [snapshot, openRows] = await Promise.all([
-    getDeskSnapshot(),
-    db.select().from(trades).where(eq(trades.state, "open")),
+    getDeskSnapshot(user.id),
+    db
+      .select()
+      .from(trades)
+      .where(
+        and(eq(trades.state, "open"), inArray(trades.accountId, ownedAccountIds(user.id))),
+      ),
   ]);
 
   // Link each broker position back to its derived row so the instrument name

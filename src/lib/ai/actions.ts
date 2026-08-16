@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { hasSession } from "@/lib/auth/guard";
+import { currentUser } from "@/lib/identity/user";
 import { buildAskContext } from "./context";
 import { runAi } from "./router";
 
@@ -64,7 +64,10 @@ export type AskResult =
   | { ok: false; error: string };
 
 export async function askQuestion(input: unknown): Promise<AskResult> {
-  if (!(await hasSession())) return { ok: false, error: "Not signed in" };
+  // The member, not merely a session: the model is about to be handed a
+  // summary of someone's trading, and it must be the asker's own.
+  const user = await currentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
 
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
@@ -72,7 +75,7 @@ export async function askQuestion(input: unknown): Promise<AskResult> {
   }
   const { question, history } = parsed.data;
 
-  const context = await buildAskContext();
+  const context = await buildAskContext(user.id);
 
   if (context.trades === 0) {
     return {

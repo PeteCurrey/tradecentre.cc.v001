@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { ArrowLeft } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { ownedAccountIds, requireUser } from "@/lib/identity/tenant";
 import {
   accounts as accountsTable,
   instruments as instrumentsTable,
@@ -30,15 +31,29 @@ export default async function TradeDetailPage({
   params: Promise<{ id: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const { id } = await params;
 
   const tradeId = Number(id);
   if (!Number.isInteger(tradeId)) notFound();
 
+  /**
+   * Scoped by owner, not merely by id.
+   *
+   * `/trades/41` is a guessable URL. Without the account filter, any member
+   * could page through every trade on the platform by incrementing a number —
+   * and 404 rather than 403 is deliberate, since "this exists but is not yours"
+   * is itself information.
+   */
   const [trade] = await db
     .select()
     .from(tradesTable)
-    .where(eq(tradesTable.id, tradeId))
+    .where(
+      and(
+        eq(tradesTable.id, tradeId),
+        inArray(tradesTable.accountId, ownedAccountIds(user.id)),
+      ),
+    )
     .limit(1);
   if (!trade) notFound();
 

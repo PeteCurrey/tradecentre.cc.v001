@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { activeEnvironment, accountCurrency, loadTrades } from "@/lib/analytics/load";
 import { groupBy, summarise } from "@/lib/analytics/stats";
 import { Card, CardHeader, StatTile } from "@/components/ui/Card";
@@ -46,13 +47,14 @@ export default async function InstrumentsPage({
   searchParams: Promise<{ book?: string }>;
 }) {
   await requireSession();
+  const user = await requireUser();
   const params = await searchParams;
   const book = BOOK_IDS.find((b) => b === params.book);
 
   const [all, currency, environment] = await Promise.all([
-    loadTrades({ book, includeOpen: true }),
-    accountCurrency(),
-    activeEnvironment(),
+    loadTrades({ userId: user.id, book, includeOpen: true }),
+    accountCurrency(user.id),
+    activeEnvironment(user.id),
   ]);
 
   const closed = all.filter((t) => t.exitTime !== null);

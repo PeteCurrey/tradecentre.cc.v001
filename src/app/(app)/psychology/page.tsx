@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { stateLogs } from "@/lib/db/schema";
 import { loadTrades } from "@/lib/analytics/load";
 import { summarise } from "@/lib/analytics/stats";
@@ -27,13 +28,14 @@ const MIN_DAYS_FOR_A_CLAIM = 10;
 
 export default async function PsychologyPage() {
   await requireSession();
+  const user = await requireUser();
 
   const today = dayKey(new Date(), DISPLAY_TZ);
 
   const [logs, todayRows, trades] = await Promise.all([
     db.select().from(stateLogs).orderBy(desc(stateLogs.day)).limit(180),
     db.select().from(stateLogs).where(eq(stateLogs.day, today)),
-    loadTrades({}),
+    loadTrades({ userId: user.id }),
   ]);
 
   const state: StateData = {

@@ -106,7 +106,16 @@ export async function register() {
 async function startEngine(): Promise<void> {
   const { ensureExecutionState } = await import("@/lib/execution/engine");
   const { startScheduler } = await import("@/lib/execution/scheduler");
+  const { ownerUser } = await import("@/lib/identity/user");
 
-  await ensureExecutionState();
+  /**
+   * Only the OWNER gets rows at boot. There is no request here and therefore no
+   * session, so there is no other member this could legitimately mean — and
+   * seeding disarmed rows for every member on the platform would be a
+   * write-amplifying loop that grows with signups for no benefit. A member's
+   * rows are created the first time they touch the engine.
+   */
+  const owner = await ownerUser();
+  await ensureExecutionState(owner.id);
   startScheduler();
 }

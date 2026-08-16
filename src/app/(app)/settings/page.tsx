@@ -1,6 +1,7 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { ownedAccountIds, requireUser } from "@/lib/identity/tenant";
 import { accounts, appConfig, books, trades } from "@/lib/db/schema";
 import { env, configuredAiProviders } from "@/lib/env";
 import { AccountMapping, type AccountRow } from "@/components/settings/AccountMapping";
@@ -20,13 +21,19 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   await requireSession();
+  const user = await requireUser();
 
-  const accountRows = await db.select().from(accounts).orderBy(asc(accounts.id));
+  const accountRows = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.userId, user.id))
+    .orderBy(asc(accounts.id));
   const bookRows = await db.select().from(books).orderBy(asc(books.id));
 
   const counts = await db
     .select({ accountId: trades.accountId, c: sql<number>`count(*)::int` })
     .from(trades)
+    .where(inArray(trades.accountId, ownedAccountIds(user.id)))
     .groupBy(trades.accountId);
   const countBy = new Map(counts.map((c) => [c.accountId, c.c]));
 

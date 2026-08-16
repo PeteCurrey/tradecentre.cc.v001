@@ -113,7 +113,22 @@ async function tick(): Promise<void> {
    */
   if (!(await anyBookArmed()) || !open) {
     const { publishIdleScan } = await import("./telemetry");
-    publishIdleScan({ nextAt: Date.now() + TICK_INTERVAL_MS, marketOpen: open });
+    const { hub } = await import("@/lib/stream/hub");
+
+    /**
+     * One heartbeat per WATCHED member, not one global one.
+     *
+     * Only members with a browser open need telling — nobody else is looking at
+     * a scan panel — and each needs it addressed to them, since the hub drops
+     * private events that aren't the subscriber's own.
+     */
+    for (const userId of hub.watchedUserIds) {
+      publishIdleScan({
+        userId,
+        nextAt: Date.now() + TICK_INTERVAL_MS,
+        marketOpen: open,
+      });
+    }
     return;
   }
 

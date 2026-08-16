@@ -1,6 +1,7 @@
 import { desc } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { dailyReviews, goals as goalsTable } from "@/lib/db/schema";
 import { loadTrades } from "@/lib/analytics/load";
 import { PageHeader } from "@/components/ui/Page";
@@ -15,10 +16,11 @@ export const dynamic = "force-dynamic";
 
 export default async function GoalsPage() {
   await requireSession();
+  const user = await requireUser();
 
   const [rows, trades, reviews] = await Promise.all([
     db.select().from(goalsTable).orderBy(desc(goalsTable.period)),
-    loadTrades({}),
+    loadTrades({ userId: user.id }),
     db.select().from(dailyReviews),
   ]);
 

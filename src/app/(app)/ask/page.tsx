@@ -1,6 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { aiRuns } from "@/lib/db/schema";
 import { loadTrades } from "@/lib/analytics/load";
 import { env } from "@/lib/env";
@@ -15,9 +16,10 @@ export const dynamic = "force-dynamic";
 
 export default async function AskPage() {
   await requireSession();
+  const user = await requireUser();
 
   const [trades, runs, totals] = await Promise.all([
-    loadTrades({}),
+    loadTrades({ userId: user.id }),
     db.select().from(aiRuns).orderBy(desc(aiRuns.createdAt)).limit(20),
     db
       .select({

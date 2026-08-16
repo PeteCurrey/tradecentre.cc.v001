@@ -22,9 +22,19 @@ import {
    ========================================================================== */
 
 /** A real OANDA sub-account, organised by instrument class. */
-export const bookEnum = pgEnum("book", ["primary", "fx", "indices", "commodities"]);
+export const bookEnum = pgEnum("book", [
+  "primary",
+  "fx",
+  "indices",
+  "commodities",
+]);
 /** Hold time. A per-trade tag, NOT an account — Peter trades all four in every book. */
-export const horizonEnum = pgEnum("horizon", ["scalp", "intraday", "swing", "position"]);
+export const horizonEnum = pgEnum("horizon", [
+  "scalp",
+  "intraday",
+  "swing",
+  "position",
+]);
 export const envEnum = pgEnum("environment", ["live", "practice"]);
 export const directionEnum = pgEnum("direction", ["long", "short"]);
 export const tradeStateEnum = pgEnum("trade_state", ["open", "closed"]);
@@ -36,8 +46,17 @@ export const patternStatusEnum = pgEnum("pattern_status", [
   "retired",
 ]);
 /** Platform role. The OWNER is not here — see lib/identity/roles.ts. */
-export const userRoleEnum = pgEnum("user_role", ["member", "moderator", "staff", "admin"]);
-export const userStatusEnum = pgEnum("user_status", ["active", "suspended", "banned"]);
+export const userRoleEnum = pgEnum("user_role", [
+  "member",
+  "moderator",
+  "staff",
+  "admin",
+]);
+export const userStatusEnum = pgEnum("user_status", [
+  "active",
+  "suspended",
+  "banned",
+]);
 
 export const opportunitySourceEnum = pgEnum("opportunity_source", [
   "spotted", // Peter saw it
@@ -59,13 +78,29 @@ export const opportunitySourceEnum = pgEnum("opportunity_source", [
 export const accounts = pgTable("accounts", {
   /** OANDA account id, e.g. "001-004-1234567-001". */
   id: text("id").primaryKey(),
+  /**
+   * THE ROOT OF TENANCY.
+   *
+   * Every other trading table keys on `accountId`, so ownership is established
+   * once here and inherited rather than denormalised onto six tables that could
+   * then disagree with each other. A trade cannot belong to a different member
+   * than the account it was executed in, and this shape makes that unsayable.
+   *
+   * `restrict` rather than `cascade`: deleting a member must not silently
+   * destroy an execution ledger. Detach the account deliberately first.
+   */
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
   book: bookEnum("book").notNull(),
   environment: envEnum("environment").notNull(),
   currency: text("currency").notNull().default("GBP"),
   alias: text("alias"),
   active: boolean("active").notNull().default(true),
   lastSyncedTransactionId: text("last_synced_transaction_id"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /**
@@ -96,7 +131,9 @@ export const appConfig = pgTable("app_config", {
   id: smallint("id").primaryKey().default(1),
   /** { scalpMaxMinutes, intradayMaxMinutes, swingMaxMinutes } */
   horizonThresholds: jsonb("horizon_thresholds").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const instruments = pgTable("instruments", {
@@ -133,7 +170,9 @@ export const transactionsRaw = pgTable(
     type: text("type").notNull(),
     time: timestamp("time", { withTimezone: true }).notNull(),
     payload: jsonb("payload").notNull(),
-    ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.accountId, t.id] }),
@@ -183,22 +222,30 @@ export const trades = pgTable(
     initialRisk: numeric("initial_risk", { precision: 20, scale: 6 }),
 
     realizedPl: numeric("realized_pl", { precision: 20, scale: 6 }),
-    financing: numeric("financing", { precision: 20, scale: 6 }).notNull().default("0"),
-    commission: numeric("commission", { precision: 20, scale: 6 }).notNull().default("0"),
+    financing: numeric("financing", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    commission: numeric("commission", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
     /**
      * Sum of OANDA's `halfSpreadCost` across entry and exit fills — the real,
      * broker-reported cost of crossing the spread. Kept separate from P&L so
      * "would this pattern clear costs?" is answerable directly, which matters
      * most on the scalp book where targets are smallest.
      */
-    spreadCost: numeric("spread_cost", { precision: 20, scale: 6 }).notNull().default("0"),
+    spreadCost: numeric("spread_cost", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
 
     rMultiple: real("r_multiple"),
     /** Max adverse / favourable excursion, expressed in R. */
     maeR: real("mae_r"),
     mfeR: real("mfe_r"),
 
-    derivedAt: timestamp("derived_at", { withTimezone: true }).notNull().defaultNow(),
+    derivedAt: timestamp("derived_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     uniqueIndex("trade_account_oanda_idx").on(t.accountId, t.oandaTradeId),
@@ -228,9 +275,12 @@ export const tradeAnnotations = pgTable(
     }),
     /** What the engine proposed, kept even after Peter overrides it — the
      *  disagreement is itself a signal about pattern definition quality. */
-    suggestedPatternId: integer("suggested_pattern_id").references(() => patterns.id, {
-      onDelete: "set null",
-    }),
+    suggestedPatternId: integer("suggested_pattern_id").references(
+      () => patterns.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     patternConfirmed: boolean("pattern_confirmed").notNull().default(false),
 
     conviction: convictionEnum("conviction"),
@@ -246,7 +296,9 @@ export const tradeAnnotations = pgTable(
 
     reasoning: text("reasoning"),
     notes: text("notes"),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.accountId, t.oandaTradeId] })],
 );
@@ -255,8 +307,41 @@ export const tradeAnnotations = pgTable(
    PATTERN LIBRARY
    ========================================================================== */
 
+/**
+ * Who can see a pattern.
+ *
+ * `house` is the curated library every member can read but not edit — it is
+ * what stops a new member's first screen being empty. `listed` is reserved for
+ * the marketplace and is deliberately defined now: the column costs nothing
+ * today and adding it later would mean migrating a table that by then holds
+ * every member's strategies.
+ *
+ * NOTE: `listed` must never be set by a submission alone. It is meant to mean
+ * "this survived out-of-sample verification", and at marketplace scale a
+ * backtest p-value cannot carry that claim — screen ten thousand submissions
+ * and hundreds pass by chance. Nothing should write this value until forward
+ * testing exists to justify it.
+ */
+export const patternVisibilityEnum = pgEnum("pattern_visibility", [
+  "private",
+  "house",
+  "listed",
+]);
+
 export const patterns = pgTable("patterns", {
   id: serial("id").primaryKey(),
+  /**
+   * Author. NULL means the house library — owned by the platform, readable by
+   * everyone, editable only by the owner.
+   *
+   * Nullable rather than pointing every house pattern at Pete's user row: the
+   * house library is a property of the platform, and tying it to one person's
+   * account would make it vanish the day that account is ever detached.
+   */
+  userId: integer("user_id").references(() => users.id, {
+    onDelete: "cascade",
+  }),
+  visibility: patternVisibilityEnum("visibility").notNull().default("private"),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   summary: text("summary"),
@@ -276,12 +361,17 @@ export const patterns = pgTable("patterns", {
   triggerRules: jsonb("trigger_rules").$type<unknown[]>().notNull().default([]),
   invalidation: text("invalidation"),
   /** Session, volatility regime, trend state, news proximity. */
-  contextFilters: jsonb("context_filters").$type<Record<string, unknown>>().notNull().default({}),
+  contextFilters: jsonb("context_filters")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   /** Profit taking, scaling, trailing, breakeven rules. */
   targetLogic: text("target_logic"),
 
   status: patternStatusEnum("status").notNull().default("incubating"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const patternExamples = pgTable("pattern_examples", {
@@ -326,7 +416,9 @@ export const opportunities = pgTable(
     taken: boolean("taken").notNull().default(false),
     linkedAccountId: text("linked_account_id"),
     linkedOandaTradeId: text("linked_oanda_trade_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("opp_day_idx").on(t.day), index("opp_source_idx").on(t.source)],
 );
@@ -335,11 +427,16 @@ export const dailyPlans = pgTable("daily_plans", {
   day: date("day").primaryKey(),
   /** { "EUR_USD": "long above 1.0850", ... } */
   bias: jsonb("bias").$type<Record<string, string>>().notNull().default({}),
-  levels: jsonb("levels").$type<Record<string, number[]>>().notNull().default({}),
+  levels: jsonb("levels")
+    .$type<Record<string, number[]>>()
+    .notNull()
+    .default({}),
   setupsHunted: jsonb("setups_hunted").$type<number[]>().notNull().default([]),
   notes: text("notes"),
   aiDraft: text("ai_draft"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const dailyReviews = pgTable("daily_reviews", {
@@ -352,7 +449,9 @@ export const dailyReviews = pgTable("daily_reviews", {
   notes: text("notes"),
   aiDraft: text("ai_draft"),
   aiModel: text("ai_model"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /**
@@ -410,7 +509,9 @@ export const goals = pgTable(
     book: bookEnum("book"),
     note: text("note"),
     achievedAt: timestamp("achieved_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("goal_period_idx").on(t.period)],
 );
@@ -450,7 +551,9 @@ export const watchlistLevels = pgTable("watchlist_levels", {
   label: text("label"),
   kind: text("kind").notNull().default("level"), // level | support | resistance | target
   active: boolean("active").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const alerts = pgTable("alerts", {
@@ -479,7 +582,9 @@ export const macroEvents = pgTable(
     /** Market-implied probability from Polymarket, 0–1, when one maps to this event. */
     impliedProbability: real("implied_probability"),
     polymarketSlug: text("polymarket_slug"),
-    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("macro_time_idx").on(t.time)],
 );
@@ -526,7 +631,9 @@ export const feedItems = pgTable(
      * something, so absence has to be meaningful.
      */
     importance: smallint("importance"),
-    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("feed_published_idx").on(t.publishedAt)],
 );
@@ -538,40 +645,68 @@ export const feedItems = pgTable(
    tables, and nothing here is required for the journal to work.
    ========================================================================== */
 
-export const armStateEnum = pgEnum("arm_state", ["disarmed", "armed", "halted"]);
+export const armStateEnum = pgEnum("arm_state", [
+  "disarmed",
+  "armed",
+  "halted",
+]);
 
 /**
- * Arm state, per book. Defaults to disarmed and stays that way until an
- * explicit action — there is no configuration that starts the engine trading.
+ * Arm state, per member per book. Defaults to disarmed and stays that way until
+ * an explicit action — there is no configuration that starts the engine
+ * trading.
  *
  * `halted` is distinct from `disarmed`: it means a guard tripped (usually the
  * daily loss limit) and requires deliberate re-arming rather than resuming on
  * its own at midnight.
+ *
+ * THE PRIMARY KEY IS THE SAFETY PROPERTY.
+ *
+ * It was `book` alone, which made arm state global: one row said "commodities
+ * is armed and out of dry run" for everybody. With SSO live that is not a
+ * privacy bug, it is one member arming another member's capital. The composite
+ * key makes a per-member arm state the only expressible kind, so no query can
+ * arm a book without saying whose.
  */
-export const executionState = pgTable("execution_state", {
-  book: bookEnum("book").primaryKey(),
-  state: armStateEnum("state").notNull().default("disarmed"),
-  /** Practice-only unless deliberately unlocked. Guards read this, not env. */
-  allowLiveCapital: boolean("allow_live_capital").notNull().default(false),
-  /**
-   * When true the engine computes and logs every order without sending it.
-   * Defaults true so the FIRST arming of a book is always harmless — going
-   * live is a second, deliberate click rather than a consequence of arming.
-   */
-  dryRun: boolean("dry_run").notNull().default(true),
-  /** Only these instruments may be traded. Empty = nothing is permitted. */
-  instrumentAllowlist: jsonb("instrument_allowlist").$type<string[]>().notNull().default([]),
-  maxOpenPositions: smallint("max_open_positions").notNull().default(2),
-  /** Ceiling on a single order as a multiple of the book's base risk. */
-  maxRiskMultiple: numeric("max_risk_multiple", { precision: 5, scale: 2 })
-    .notNull()
-    .default("1.50"),
-  /** Which patterns this book is allowed to trade. Empty = none. */
-  enabledPatternIds: jsonb("enabled_pattern_ids").$type<number[]>().notNull().default([]),
-  haltedReason: text("halted_reason"),
-  armedAt: timestamp("armed_at", { withTimezone: true }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const executionState = pgTable(
+  "execution_state",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    book: bookEnum("book").notNull(),
+    state: armStateEnum("state").notNull().default("disarmed"),
+    /** Practice-only unless deliberately unlocked. Guards read this, not env. */
+    allowLiveCapital: boolean("allow_live_capital").notNull().default(false),
+    /**
+     * When true the engine computes and logs every order without sending it.
+     * Defaults true so the FIRST arming of a book is always harmless — going
+     * live is a second, deliberate click rather than a consequence of arming.
+     */
+    dryRun: boolean("dry_run").notNull().default(true),
+    /** Only these instruments may be traded. Empty = nothing is permitted. */
+    instrumentAllowlist: jsonb("instrument_allowlist")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    maxOpenPositions: smallint("max_open_positions").notNull().default(2),
+    /** Ceiling on a single order as a multiple of the book's base risk. */
+    maxRiskMultiple: numeric("max_risk_multiple", { precision: 5, scale: 2 })
+      .notNull()
+      .default("1.50"),
+    /** Which patterns this book is allowed to trade. Empty = none. */
+    enabledPatternIds: jsonb("enabled_pattern_ids")
+      .$type<number[]>()
+      .notNull()
+      .default([]),
+    haltedReason: text("halted_reason"),
+    armedAt: timestamp("armed_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.book] })],
+);
 
 export const orderOutcomeEnum = pgEnum("order_outcome", [
   "rejected_by_guard",
@@ -619,7 +754,9 @@ export const orderLog = pgTable(
     request: jsonb("request").$type<Record<string, unknown>>(),
     response: jsonb("response").$type<Record<string, unknown>>(),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("order_log_created_idx").on(t.createdAt),
@@ -652,9 +789,14 @@ export const aiRuns = pgTable(
     ok: boolean("ok").notNull().default(true),
     error: text("error"),
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (t) => [index("ai_runs_created_idx").on(t.createdAt), index("ai_runs_task_idx").on(t.task)],
+  (t) => [
+    index("ai_runs_created_idx").on(t.createdAt),
+    index("ai_runs_task_idx").on(t.task),
+  ],
 );
 
 /* ==========================================================================
@@ -747,7 +889,9 @@ export const users = pgTable(
     chatEnabled: boolean("chat_enabled").notNull().default(false),
     onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   },
   (t) => [
@@ -775,7 +919,9 @@ export const moderationActions = pgTable(
   "moderation_actions",
   {
     id: serial("id").primaryKey(),
-    actorId: integer("actor_id").references(() => users.id, { onDelete: "set null" }),
+    actorId: integer("actor_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     targetUserId: integer("target_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -784,8 +930,13 @@ export const moderationActions = pgTable(
     /** Free text shown to the member. */
     reason: text("reason"),
     /** Before/after for a role change, the end date for a suspension, etc. */
-    detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    detail: jsonb("detail")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("moderation_target_idx").on(t.targetUserId, t.createdAt),
@@ -818,7 +969,9 @@ export const usernameHistory = pgTable(
     /** The name as it was held, original casing preserved. */
     username: text("username").notNull(),
     heldFrom: timestamp("held_from", { withTimezone: true }),
-    releasedAt: timestamp("released_at", { withTimezone: true }).notNull().defaultNow(),
+    releasedAt: timestamp("released_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("username_history_user_idx").on(t.userId),
@@ -840,7 +993,9 @@ export const chatRooms = pgTable(
     /** Optional OANDA instrument this room is about, for cross-linking. */
     instrument: text("instrument"),
     archived: boolean("archived").notNull().default(false),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("chat_rooms_archived_idx").on(t.archived)],
 );
@@ -870,11 +1025,15 @@ export const chatMessages = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     body: text("body").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
     /** Moderation. The row stays; the body stops being shown. */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    deletedBy: integer("deleted_by").references(() => users.id, { onDelete: "set null" }),
+    deletedBy: integer("deleted_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [index("chat_messages_room_idx").on(t.roomSlug, t.id)],
 );

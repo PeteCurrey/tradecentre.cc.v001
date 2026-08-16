@@ -20,6 +20,7 @@ import type { OandaEnvironment, PricingStreamMessage } from "@/lib/oanda/types";
  * is the only reliable signal, so we treat it as a disconnect.
  */
 
+import { isPrivate } from "./events";
 import type {
   ConnectionState,
   DeskPush,
@@ -57,16 +58,23 @@ class StreamHub {
   private reconnectAttempt = 0;
   private started = false;
   private instruments: string[] = DEFAULT_INSTRUMENTS;
+  /** Connected browsers per member, so state can be dropped when they leave. */
+  private watchers = new Map<number, number>();
 
   /**
-   * Last of each pushed event, replayed to a client on connect.
+   * Last of each pushed event, PER MEMBER, replayed on connect.
    *
    * Without this a browser that connects between pushes sits on an empty hero
    * for up to a full cycle — which reads exactly like the feed being broken,
    * the impression this whole surface exists to avoid.
+   *
+   * Keyed by user id rather than held as one value: a single `lastDesk` would
+   * replay whichever member's snapshot happened to be built most recently to
+   * whoever connected next, which is the same leak as broadcasting it live but
+   * harder to notice.
    */
-  private lastDesk: DeskPush | null = null;
-  private lastScan: ScanPush | null = null;
+  private lastDesk = new Map<number, DeskPush>();
+  private lastScan = new Map<number, ScanPush>();
   /** True while a disconnect was caused by us changing the instrument set. */
   private resubscribing = false;
 
@@ -79,8 +87,8 @@ class StreamHub {
     return [...this.lastTicks.values()];
   }
 
-  get deskSnapshot(): DeskPush | null {
-    return this.lastDesk;
+  deskSnapshotFor(userId: number): DeskPush | null {
+    return this.lastDesk.get(userId) ?? null;
   }
 
   /** True while at least one browser is listening. */
@@ -93,8 +101,8 @@ class StreamHub {
     return this.lastTicks.get(instrument) ?? null;
   }
 
-  get scanSnapshot(): ScanPush | null {
-    return this.lastScan;
+  scanSnapshotFor(userId: number): ScanPush | null {
+    return this.lastScan.get(userId) ?? null;
   }
 
   /** Instruments currently subscribed on the pricing stream. */
@@ -102,21 +110,52 @@ class StreamHub {
     return [...this.instruments];
   }
 
-  subscribe(fn: Subscriber): () => void {
-    this.subscribers.add(fn);
-    return () => this.subscribers.delete(fn);
+  /**
+   * Subscribe on behalf of ONE member.
+   *
+   * Public events (prices, connection status) reach every subscriber; private
+   * ones reach only their owner. Routing lives here rather than in the SSE
+   * route so that a future second consumer of the hub cannot get it wrong —
+   * there is no way to subscribe without saying who you are.
+   */
+  subscribeFor(userId: number, fn: Subscriber): () => void {
+    const scoped: Subscriber = (event) => {
+      if (isPrivate(event) && event.userId !== userId) return;
+      fn(event);
+    };
+    this.subscribers.add(scoped);
+    this.watchers.set(userId, (this.watchers.get(userId) ?? 0) + 1);
+
+    return () => {
+      this.subscribers.delete(scoped);
+      const n = (this.watchers.get(userId) ?? 1) - 1;
+      if (n <= 0) {
+        this.watchers.delete(userId);
+        // Nobody is looking at this member any more; drop their retained state
+        // rather than holding a snapshot of their positions in memory forever.
+        this.lastDesk.delete(userId);
+        this.lastScan.delete(userId);
+      } else {
+        this.watchers.set(userId, n);
+      }
+    };
+  }
+
+  /** Members with at least one browser connected. Drives who gets built. */
+  get watchedUserIds(): number[] {
+    return [...this.watchers.keys()];
   }
 
   /* ---- Publishing from elsewhere on the server ------------------------- */
 
-  publishDesk(desk: DeskPush): void {
-    this.lastDesk = desk;
-    this.emit({ type: "desk", desk });
+  publishDesk(userId: number, desk: DeskPush): void {
+    this.lastDesk.set(userId, desk);
+    this.emit({ type: "desk", userId, desk });
   }
 
-  publishScan(scan: ScanPush): void {
-    this.lastScan = scan;
-    this.emit({ type: "scan", scan });
+  publishScan(userId: number, scan: ScanPush): void {
+    this.lastScan.set(userId, scan);
+    this.emit({ type: "scan", userId, scan });
   }
 
   /**
@@ -126,8 +165,8 @@ class StreamHub {
    * same trade repeatedly, hours after it happened. These are moments, not
    * state — the state they produced arrives in the next desk push.
    */
-  publishEngine(event: EngineEvent): void {
-    this.emit({ type: "engine", event });
+  publishEngine(userId: number, event: EngineEvent): void {
+    this.emit({ type: "engine", userId, event });
   }
 
   /**

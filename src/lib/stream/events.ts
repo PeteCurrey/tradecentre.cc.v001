@@ -169,13 +169,41 @@ export type EngineEvent = {
    HUB EVENT UNION
    ========================================================================== */
 
-export type HubEvent =
+/**
+ * PUBLIC events carry no member's data and go to every subscriber.
+ *
+ * Prices are the market's, not anyone's — one shared OANDA pricing stream fans
+ * out to everybody, which is the entire reason the hub exists.
+ */
+export type PublicHubEvent =
   | { type: "tick"; tick: Tick }
-  | { type: "transaction"; accountId: string; transactionType: string; id: string }
-  | { type: "status"; state: ConnectionState; detail?: string }
-  | { type: "desk"; desk: DeskPush }
-  | { type: "scan"; scan: ScanPush }
-  | { type: "engine"; event: EngineEvent };
+  | { type: "status"; state: ConnectionState; detail?: string };
+
+/**
+ * PRIVATE events belong to exactly one member and must never reach another.
+ *
+ * Every one carries `userId`, and it is not optional — a private event with no
+ * owner has no safe default, so the type refuses to let one be constructed. The
+ * hub routes on this field; see `subscribeFor`.
+ */
+export type PrivateHubEvent =
+  | { type: "desk"; userId: number; desk: DeskPush }
+  | { type: "scan"; userId: number; scan: ScanPush }
+  | { type: "engine"; userId: number; event: EngineEvent }
+  | {
+      type: "transaction";
+      userId: number;
+      accountId: string;
+      transactionType: string;
+      id: string;
+    };
+
+export type HubEvent = PublicHubEvent | PrivateHubEvent;
+
+/** Narrowing helper, so the routing rule lives in one place. */
+export function isPrivate(e: HubEvent): e is PrivateHubEvent {
+  return e.type === "desk" || e.type === "scan" || e.type === "engine" || e.type === "transaction";
+}
 
 /**
  * Mark a position to market from a tick.

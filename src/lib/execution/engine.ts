@@ -54,41 +54,53 @@ const SCAN_BARS = 400;
 export async function runTick(opts: TickOptions = {}): Promise<TickResult[]> {
   const results: TickResult[] = [];
 
-  // Collected across every book so the browser receives one coherent picture of
-  // the whole tick rather than a push per book.
-  const scan = new ScanCollector();
-
   const states = await db
     .select()
     .from(executionState)
     .where(eq(executionState.state, "armed"));
 
+  /**
+   * Grouped by member, because one tick sweeps the whole platform.
+   *
+   * Each member gets their own collector and therefore their own push — a
+   * single collector would gather every armed book on the platform into one
+   * message and hand each member everyone else's setups.
+   */
+  const byUser = new Map<number, StateRow[]>();
   for (const state of states) {
-    const result: TickResult = {
-      book: state.book as BookId,
-      managed: 0,
-      scanned: 0,
-      submitted: 0,
-      rejected: 0,
-      errors: [],
-    };
-
-    try {
-      await runBook(state, result, scan);
-    } catch (e) {
-      // One book failing must never stop the others — particularly since the
-      // others may have open positions that still need managing.
-      result.errors.push((e as Error).message);
-    }
-    results.push(result);
+    const list = byUser.get(state.userId);
+    if (list) list.push(state);
+    else byUser.set(state.userId, [state]);
   }
 
-  // Published even when nothing is armed. A tick that found nothing still
-  // proves the loop is alive, which is most of what this telemetry is for.
-  scan.publish({
-    nextAt: opts.nextTickAt ?? Date.now(),
-    marketOpen: opts.marketOpen ?? true,
-  });
+  for (const [userId, userStates] of byUser) {
+    const scan = new ScanCollector(userId);
+
+    for (const state of userStates) {
+      const result: TickResult = {
+        book: state.book as BookId,
+        managed: 0,
+        scanned: 0,
+        submitted: 0,
+        rejected: 0,
+        errors: [],
+      };
+
+      try {
+        await runBook(state, result, scan);
+      } catch (e) {
+        // One book failing must never stop the others — particularly since the
+        // others may have open positions that still need managing.
+        result.errors.push((e as Error).message);
+      }
+      results.push(result);
+    }
+
+    scan.publish({
+      nextAt: opts.nextTickAt ?? Date.now(),
+      marketOpen: opts.marketOpen ?? true,
+    });
+  }
 
   return results;
 }
@@ -109,10 +121,25 @@ async function runBook(
   const book = state.book as BookId;
   scan.noteBook(book);
 
+  /**
+   * The account MUST be scoped by the arm state's owner.
+   *
+   * Looking one up by book alone was correct while there was one trader, and is
+   * the single most dangerous query in the codebase once there are two: an
+   * armed state row belonging to one member would resolve to whichever account
+   * happened to hold that book, and the engine would trade a stranger's capital
+   * under their own guards. Scoping here is what makes that impossible.
+   */
   const [account] = await db
     .select()
     .from(accounts)
-    .where(and(eq(accounts.book, book), eq(accounts.active, true)));
+    .where(
+      and(
+        eq(accounts.userId, state.userId),
+        eq(accounts.book, book),
+        eq(accounts.active, true),
+      ),
+    );
   if (!account) {
     result.errors.push(`No active account for ${book}`);
     return;
@@ -181,7 +208,7 @@ async function runBook(
     if (!action) continue;
     result.managed++;
 
-    announce({
+    announce(state.userId, {
       kind: "managed",
       book,
       instrument: t.instrument,
@@ -212,8 +239,17 @@ async function runBook(
           result: r,
         });
       } else if (action.kind === "scaleOut") {
-        // Partial closes reduce risk, so they take the same path as a flatten.
-        const r = await exec.closeTrade(account.id, t.id, false);
+        /**
+         * Partial close. Takes the same path as a flatten because it reduces
+         * risk, and honours `send` for the same reason every other action does:
+         * a scale-out that never fires means the pattern is running a different
+         * strategy than the one being measured, and every performance figure
+         * for it is then describing something that did not happen.
+         *
+         * `action.units` is signed against the position; closeTrade takes the
+         * magnitude and infers direction from the trade itself.
+         */
+        const r = await exec.closeTrade(account.id, t.id, send, action.units);
         await logOrder({
           account,
           book,
@@ -221,8 +257,8 @@ async function runBook(
           instrument: t.instrument,
           direction: position.direction,
           units: action.units,
-          outcome: "dry_run",
-          reason: `${action.reason} (partial close not yet implemented — logged only)`,
+          outcome: send ? (r.ok ? "submitted" : "error") : "dry_run",
+          reason: action.reason,
           result: r,
         });
       } else {
@@ -403,7 +439,7 @@ async function runBook(
           rejectedBy: approval.guard,
           reason: approval.reason,
         });
-        announce({
+        announce(state.userId, {
           kind: "rejected",
           book,
           instrument,
@@ -439,7 +475,7 @@ async function runBook(
           reason: `${pattern.name} triggered`,
           result: r,
         });
-        announce({
+        announce(state.userId, {
           kind: "fill",
           book,
           instrument,
@@ -631,17 +667,33 @@ async function logOrder(o: {
   });
 }
 
-/** Halt a book and record why. Used by the kill switch and the daily limit. */
-export async function haltBook(book: BookId, reason: string): Promise<void> {
+/**
+ * Halt one member's book and record why. Used by the kill switch and the daily
+ * limit.
+ *
+ * Scoped to a user for the same reason arming is: a kill switch that halted
+ * every member's books would be as wrong as one that halted none of them.
+ */
+export async function haltBook(
+  userId: number,
+  book: BookId,
+  reason: string,
+): Promise<void> {
   await db
     .update(executionState)
     .set({ state: "halted", haltedReason: reason, updatedAt: new Date() })
-    .where(eq(executionState.book, book));
+    .where(and(eq(executionState.userId, userId), eq(executionState.book, book)));
 }
 
-/** Ensure every book has a row, all disarmed. Safe to call repeatedly. */
-export async function ensureExecutionState(): Promise<void> {
+/**
+ * Ensure a member has a row for every book, all disarmed. Safe to call
+ * repeatedly.
+ *
+ * Takes the user explicitly rather than reading the session: this runs at boot
+ * for the owner, where there is no request and therefore no session to read.
+ */
+export async function ensureExecutionState(userId: number): Promise<void> {
   for (const book of BOOK_IDS) {
-    await db.insert(executionState).values({ book }).onConflictDoNothing();
+    await db.insert(executionState).values({ userId, book }).onConflictDoNothing();
   }
 }

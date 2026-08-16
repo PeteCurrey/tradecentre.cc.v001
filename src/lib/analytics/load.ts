@@ -18,6 +18,12 @@ import type { BookId } from "@/lib/books";
  */
 
 export type LoadOptions = {
+  /**
+   * Whose trades. Required — analytics with no owner would silently aggregate
+   * the whole platform into one equity curve, which is both a leak and a
+   * meaningless number.
+   */
+  userId: number;
   book?: BookId;
   /** Practice books instead of live ones. Never both. */
   demo?: boolean;
@@ -27,13 +33,19 @@ export type LoadOptions = {
   limit?: number;
 };
 
-export async function loadTrades(opts: LoadOptions = {}): Promise<AnalyticsTrade[]> {
+export async function loadTrades(opts: LoadOptions): Promise<AnalyticsTrade[]> {
   const environment = opts.demo ? "practice" : "live";
 
   const accountRows = await db
     .select()
     .from(accounts)
-    .where(and(eq(accounts.environment, environment), eq(accounts.active, true)));
+    .where(
+      and(
+        eq(accounts.userId, opts.userId),
+        eq(accounts.environment, environment),
+        eq(accounts.active, true),
+      ),
+    );
 
   // Fall back to whatever accounts exist when none match the requested
   // environment — every account today is practice, and an analytics screen that
@@ -47,7 +59,10 @@ export async function loadTrades(opts: LoadOptions = {}): Promise<AnalyticsTrade
   const usable =
     accountRows.length > 0
       ? accountRows
-      : await db.select().from(accounts).where(eq(accounts.active, true));
+      : await db
+          .select()
+          .from(accounts)
+          .where(and(eq(accounts.userId, opts.userId), eq(accounts.active, true)));
 
   const ids = usable
     .filter((a) => (opts.book ? a.book === opts.book : true))
@@ -106,17 +121,27 @@ export async function loadTrades(opts: LoadOptions = {}): Promise<AnalyticsTrade
  * silently labelling practice results as live is exactly the confusion the
  * demo/live separation exists to prevent.
  */
-export async function activeEnvironment(): Promise<"live" | "practice"> {
+export async function activeEnvironment(userId: number): Promise<"live" | "practice"> {
   const rows = await db
     .select({ id: accounts.id })
     .from(accounts)
-    .where(and(eq(accounts.environment, "live"), eq(accounts.active, true)))
+    .where(
+      and(
+        eq(accounts.userId, userId),
+        eq(accounts.environment, "live"),
+        eq(accounts.active, true),
+      ),
+    )
     .limit(1);
   return rows.length > 0 ? "live" : "practice";
 }
 
 /** Account currency for display. One currency across the books in practice. */
-export async function accountCurrency(): Promise<string> {
-  const rows = await db.select().from(accounts).limit(1);
+export async function accountCurrency(userId: number): Promise<string> {
+  const rows = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.userId, userId))
+    .limit(1);
   return rows[0]?.currency ?? "GBP";
 }

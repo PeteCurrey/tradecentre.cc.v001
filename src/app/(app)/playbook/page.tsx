@@ -2,6 +2,7 @@ import Link from "next/link";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { books as booksTable, executionState, patterns } from "@/lib/db/schema";
 import { loadTrades } from "@/lib/analytics/load";
 import { summarise } from "@/lib/analytics/stats";
@@ -28,12 +29,13 @@ export const dynamic = "force-dynamic";
  */
 export default async function PlaybookPage() {
   await requireSession();
+  const user = await requireUser();
 
   const [bookRows, states, patternRows, trades] = await Promise.all([
     db.select().from(booksTable),
     db.select().from(executionState),
     db.select().from(patterns).where(eq(patterns.status, "live")).orderBy(asc(patterns.name)),
-    loadTrades({}),
+    loadTrades({ userId: user.id }),
   ]);
 
   const s = summarise(trades);

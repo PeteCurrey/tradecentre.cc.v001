@@ -2,6 +2,7 @@ import Link from "next/link";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/identity/tenant";
 import { accounts, executionState, patterns } from "@/lib/db/schema";
 import { loadTrades } from "@/lib/analytics/load";
 import { groupBy, summarise } from "@/lib/analytics/stats";
@@ -50,12 +51,13 @@ const STAGES = [
 
 export default async function IdeaLabPage() {
   await requireSession();
+  const user = await requireUser();
 
   const [patternRows, states, accountRows, demoTrades] = await Promise.all([
     db.select().from(patterns).orderBy(asc(patterns.name)),
     db.select().from(executionState),
     db.select().from(accounts).where(eq(accounts.active, true)),
-    loadTrades({ demo: true }),
+    loadTrades({ userId: user.id, demo: true }),
   ]);
 
   const incubating = patternRows.filter((p) => p.status === "incubating");
