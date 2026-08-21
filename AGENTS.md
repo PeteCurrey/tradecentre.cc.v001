@@ -29,6 +29,32 @@ no read-only scope. The only protection against placing a real order is that
 If order placement is ever genuinely wanted it belongs in a separate,
 explicitly-named module with its own confirmation flow — never in this client.
 
+## ⚠️ The guarantees live in TESTS, not types
+
+`npm test` is the gate. Two suites assert properties by reading source text,
+and neither `tsc` nor `next build` can see them:
+
+- `src/lib/oanda/no-write.test.ts` — the read client cannot write
+- `src/lib/identity/tenancy.test.ts` — no file reads a tenant table
+  (`trades`, `accounts`, `order_log`, `trade_annotations`, `execution_state`,
+  `transactions_raw`) without naming a user
+
+**A green typecheck and a green build is not a green tree.** `main` has already
+been pushed red twice by checking only those two. Run `npm test`.
+
+When `tenancy.test.ts` flags a file, scope the query or add an entry to its
+`EXEMPT` map *with the reason it is safe* — never loosen the pattern to quiet
+it. A separate test fails when `EXEMPT` names a file that no longer exists, so
+the list cannot rot into blanket permission.
+
+## 👥 Several sessions share this checkout
+
+More than one agent commits to this working tree at once. Before starting,
+check `git status` and `ListAgents`. Commit and push your own work; never sweep
+up another session's uncommitted changes — uncommitted usually means
+deliberately held back, and doing so has already deployed a migration that was
+being withheld on purpose.
+
 ## 🎨 The colour rule
 
 - **Orange** (`--color-accent`) = interface state: active, live, selected, armed
